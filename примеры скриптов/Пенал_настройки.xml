@@ -1,0 +1,84 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<Options>
+  <Items>
+    <Item Name="Ширина, мм">
+      <Value>500</Value>
+    </Item>
+    <Item Name="Глубина, мм">
+      <Value>600</Value>
+    </Item>
+    <Item Name="Высота верхнего модуля (антресоль), мм">
+      <Value>1100</Value>
+    </Item>
+    <Item Name="Цоколь снизу (без панели), мм">
+      <Value>100</Value>
+    </Item>
+    <Item Name="Нижняя секция низа (в свету), мм">
+      <Value>510</Value>
+    </Item>
+    <Item Name="Верхняя секция низа (в свету), мм">
+      <Value>842</Value>
+    </Item>
+    <Item Name="Левая колонка верхней секции (в свету), мм">
+      <Value>190</Value>
+    </Item>
+    <Item Name="Зазор между фасадами, мм">
+      <Value>4</Value>
+    </Item>
+    <Item Name="Доп. полок, правая колонка верхней секции">
+      <Value>2</Value>
+    </Item>
+    <Item Name="Доп. полок, нижняя секция (на всю ширину)">
+      <Value>1</Value>
+    </Item>
+    <Item Name="Корпус и фасады (панель 16мм)">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Материал корпуса/фасадов">
+          <Value>
+            <Name>ЛДСП дерево</Name>
+            <Thickness>16</Thickness>
+            <Width>-1</Width>
+          </Value>
+        </Item>
+        <Item Name="Кромка видимая">
+          <Value>
+            <Name>Кромка 1х19 дерево</Name>
+            <Thickness>1</Thickness>
+            <Width>19</Width>
+            <Tape>Y</Tape>
+            <Sign>1х19 дерево</Sign>
+            <Overhung>30</Overhung>
+            <Clip>1</Clip>
+          </Value>
+        </Item>
+        <Item Name="Кромка невидимая">
+          <Value>
+            <Name>Кромка 1х19 дерево</Name>
+            <Thickness>1</Thickness>
+            <Width>19</Width>
+            <Tape>Y</Tape>
+            <Sign>1х19 дерево</Sign>
+            <Overhung>30</Overhung>
+            <Clip>1</Clip>
+          </Value>
+        </Item>
+      </Items>
+    </Item>
+    <Item Name="Задняя стенка (панель 4мм)">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Материал задней стенки">
+          <Value>
+            <Name>Цвет чёрный</Name>
+            <Thickness>4</Thickness>
+            <Width>-1</Width>
+          </Value>
+        </Item>
+      </Items>
+    </Item>
+    <Item>
+      <ReadOnly>Y</ReadOnly>
+    </Item>
+  </Items>
+</Options>

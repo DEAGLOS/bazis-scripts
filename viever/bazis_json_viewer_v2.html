@@ -1,0 +1,2686 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Базис 3D — просмотр JSON + DAE</title>
+<style>
+  :root{
+    --bg: #14161a; --panel: #1c1f24; --line: #2a2e35;
+    --text: #d8dbe0; --muted: #7b8290; --accent: #5fb0ff;
+  }
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:"SF Mono","Consolas",monospace; overflow:hidden;
+    user-select:none; -webkit-user-select:none; -moz-user-select:none;} /* иначе перетаскивание мышью (вращение камеры) выделяет текст страницы */
+  #canvas-wrap{position:absolute;inset:0; touch-action:none; cursor:none;} /* блокирует зум/скролл браузера от тапов и pinch — жесты обрабатывает сам OrbitControls; cursor:none — свой курсор ниже */
+  canvas{display:block;}
+  #customCursor{
+    position:fixed; left:0; top:0; width:22px; height:22px; border-radius:50%;
+    background:#9a9a9a; opacity:0.3; pointer-events:none; z-index:50;
+    border:1px solid rgba(255,255,255,0.45);
+    transform:translate(-50%,-50%); transition:opacity 0.08s linear;
+    display:none;
+  }
+
+  #drop{
+    position:absolute;inset:0;z-index:5;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;
+    background:var(--bg);
+  }
+  #drop.hidden{display:none;}
+  #dropBox{
+    width:480px;max-width:85vw;padding:36px;border:1.5px dashed var(--line);
+    border-radius:8px;text-align:center;color:var(--muted);font-size:13px;
+    transition:border-color .15s, background .15s;
+  }
+  #dropBox.drag{border-color:var(--accent); background:#1a2530;}
+  #dropBox b{color:var(--text);display:block;font-size:15px;margin-bottom:10px;}
+  #dropBox .note{font-size:11px; margin-top:10px; line-height:1.6;}
+  #fileBtn{
+    margin-top:16px;background:var(--accent);color:#0b1520;border:none;
+    padding:8px 18px;border-radius:5px;font-family:inherit;font-size:12px;
+    font-weight:600;cursor:pointer;
+  }
+  #fileInput, #fileInputFallback{display:none;}
+  #pendingList{margin-top:14px; font-size:11px; text-align:left; max-height:120px; overflow:auto;}
+  #buildBtn{
+    margin-top:14px;background:#2a2e35;color:var(--text);border:1px solid var(--line);
+    padding:7px 16px;border-radius:5px;font-family:inherit;font-size:12px;cursor:pointer;display:none;
+  }
+  #buildBtn.ready{border-color:var(--accent);color:var(--accent);}
+
+  #hud{position:absolute; top:0; left:0; right:0; z-index:4;
+    display:flex; align-items:flex-start; justify-content:space-between;
+    padding:14px 18px; pointer-events:none;}
+  #title{font-size:12px; color:var(--muted); pointer-events:auto;}
+  #title b{color:var(--text); font-weight:600;}
+  #stats{position:absolute;top:52px;right:18px;font-size:11px; color:var(--muted); text-align:right; line-height:1.7; display:none;}
+  #stats span{color:var(--accent);}
+  #toolbar{position:absolute; top:14px; right:18px; left:18px; z-index:6; display:flex; gap:8px;
+    overflow-x:auto; overflow-y:hidden; flex-wrap:nowrap; -webkit-overflow-scrolling:touch; padding-bottom:4px;}
+  #toolbar .btn{flex:0 0 auto;} /* иначе кнопки сжимаются вместо прокрутки */
+  .btn{background:var(--panel); color:var(--text); border:1px solid var(--line);
+    padding:6px 12px; border-radius:5px; font-family:inherit; font-size:11px; cursor:pointer;}
+  .btn:hover{border-color:var(--accent);}
+  #hint{position:absolute; bottom:16px; left:18px; z-index:4; font-size:11px; color:var(--muted);}
+  #err{position:absolute; bottom:16px; right:18px; z-index:4; font-size:11px; color:#ff8080; max-width:40vw; text-align:right;}
+</style>
+</head>
+<body>
+
+<div id="canvas-wrap"></div>
+
+<div id="drop">
+  <div id="dropBox">
+    <b>Просмотр модели Базиса</b>
+    перетащи сюда ПАПКУ с результатом экспорта (или выбери её кнопкой) —
+    внутри должны быть .json, .dae и подпапка с текстурами, всё найдётся
+    само, включая вложенные подпапки
+    <div><button id="fileBtn">Выбрать папку экспорта…</button></div>
+    <input type="file" id="fileInput" webkitdirectory multiple>
+    <div class="note">Не работает выбор папки (часто бывает на Android)?
+    Выдели все нужные файлы вручную — тоже сработает:</div>
+    <div><button id="fileBtnFallback">Выбрать файлы (без папки)…</button></div>
+    <input type="file" id="fileInputFallback" multiple>
+    <div id="pendingList"></div>
+    <button id="buildBtn">Собрать сцену</button>
+    <div class="note">Обязателен только .json — .dae и текстуры опциональны:<br>
+    без .dae вся фурнитура будет проволочными боксами, как раньше.</div>
+  </div>
+</div>
+
+<div id="hud" style="display:none">
+  <div id="title">БАЗИС 3D &middot; <b id="modelName">—</b></div>
+</div>
+<div id="toolbar" style="display:none">
+  <button class="btn" id="lightBtn">Глобальный свет: выкл</button>
+  <button class="btn" id="outlineBtn">Контур: выкл</button>
+  <button class="btn" id="pointsBtn">Точки: выкл</button>
+  <button class="btn" id="shadeBtn">Тени: вкл</button>
+  <button class="btn" id="cutawayBtn">Разрез: выкл</button>
+  <button class="btn" id="cutPlaceBtn">Поставить плоскость среза</button>
+  <button class="btn" id="cutToggleBtn">Разрез плоскостью: выкл</button>
+  <button class="btn" id="cutFlipBtn">Перевернуть сторону</button>
+  <button class="btn" id="cutBackBtn">◀ Ближе</button>
+  <button class="btn" id="cutFwdBtn">Дальше ▶</button>
+  <button class="btn" id="cutResetBtn">Сбросить срез</button>
+  <button class="btn" id="resetViewBtn">Сбросить вид</button>
+  <button class="btn" id="debugCutBtn">Debug: срез</button>
+  <button class="btn" id="reloadBtn">Загрузить другой набор</button>
+</div>
+<div id="stats"></div>
+<div id="hint" style="display:none">ЛКМ — вращение · колесо — зум</div>
+<div id="err"></div>
+<div id="customCursor"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/ColladaLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/objects/Reflector.js"></script>
+<script src="material_config.js"></script>
+<script>
+// ============================================================
+// Геометрия панелей/боксов из JSON — фиксированный порядок 8 точек,
+// см. GetCorners в Экспорт_JSON_3D.js
+// ============================================================
+const BOX_TRIS = [
+  [0,1,3],[0,3,2], [4,5,7],[4,7,6], [0,1,5],[0,5,4],
+  [2,3,7],[2,7,6], [0,2,6],[0,6,4], [1,3,7],[1,7,5],
+];
+// то же самое, но по граням (для панелей с UV — своя четвёрка вершин на грань)
+const BOX_FACES = [
+  [0,1,3,2], [4,5,7,6], [0,1,5,4], [2,3,7,6], [0,2,6,4], [1,3,7,5]
+];
+const BOX_EDGES = [
+  [0,1],[1,3],[3,2],[2,0], [4,5],[5,7],[7,6],[6,4], [0,4],[1,5],[2,6],[3,7]
+];
+const IGNORE_NAMES = new Set(["габаритная рамка"]);
+const MM_TO_M = 0.001;
+const DEBUG_WALL_COLOR = false; // подтвердилось — стенки строятся, отладка не нужна
+
+function decodeColor(c){
+  if (c === null || c === undefined) return null;
+  return [ (c & 0xFF)/255, ((c>>8)&0xFF)/255, ((c>>16)&0xFF)/255 ];
+}
+function normalizeName(name){
+  return (name||'').replace(/\r/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
+}
+
+// ============================================================
+// Лёгкий разбор библиотеки материалов .dae — отдельно от ColladaLoader,
+// потому что нужен прямой доступ "имя материала -> текстура/цвет",
+// а не итоговые THREE.Material с внутренней структурой загрузчика.
+// ============================================================
+function parseDaeMaterials(daeText, textureMap){
+  const dom = new DOMParser().parseFromString(daeText, 'application/xml');
+  const NS = 'http://www.collada.org/2005/11/COLLADASchema';
+  const q = (parent, tag) => parent.getElementsByTagNameNS(NS, tag);
+
+  const images = {}; // image id -> blob URL (или null, если файла нет среди загруженных)
+  Array.from(q(dom,'image')).forEach(img=>{
+    const id = img.getAttribute('id');
+    const initFrom = q(img,'init_from')[0];
+    if (initFrom && initFrom.textContent){
+      const base = initFrom.textContent.trim().split(/[\\\/]/).pop().toLowerCase();
+      images[id] = textureMap[base] || null;
+    }
+  });
+
+  const effects = {}; // effect id -> {imageId, color, shininess}
+  Array.from(q(dom,'effect')).forEach(eff=>{
+    const id = eff.getAttribute('id');
+    const diffuse = q(eff,'diffuse')[0];
+    let imageId=null, color=null;
+    if (diffuse){
+      const texEl = q(diffuse,'texture')[0];
+      const colorEl = q(diffuse,'color')[0];
+      if (texEl){
+        const samplerSid = texEl.getAttribute('texture');
+        const newparams = Array.from(q(eff,'newparam'));
+        let surfaceSid = null;
+        newparams.forEach(np=>{
+          if (np.getAttribute('sid')===samplerSid){
+            const src = q(np,'source')[0];
+            if (src) surfaceSid = src.textContent.trim();
+          }
+        });
+        newparams.forEach(np=>{
+          if (np.getAttribute('sid')===surfaceSid){
+            const initFrom = q(np,'init_from')[0];
+            if (initFrom) imageId = initFrom.textContent.trim();
+          }
+        });
+      } else if (colorEl){
+        color = colorEl.textContent.trim().split(/\s+/).map(Number).slice(0,3);
+      }
+    }
+    // блеск (Phong/Blinn shininess) — то же, что дало глянец фурнитуре;
+    // применяем и к панелям, раз источник данных общий (.dae), а не JSON
+    let shininess = null;
+    const shinEl = q(eff,'shininess')[0];
+    if (shinEl){
+      const floatEl = q(shinEl,'float')[0];
+      if (floatEl) shininess = parseFloat(floatEl.textContent);
+    }
+    effects[id] = { imageId, color, shininess };
+  });
+
+  const materials = {}; // normalizedName -> {textureURL, color, shininess}
+  Array.from(q(dom,'material')).forEach(mat=>{
+    const name = mat.getAttribute('name') || mat.getAttribute('id');
+    const instEff = q(mat,'instance_effect')[0];
+    if (!instEff) return;
+    const effId = instEff.getAttribute('url').replace(/^#/,'');
+    const eff = effects[effId];
+    if (!eff) return;
+    materials[normalizeName(name)] = {
+      textureURL: eff.imageId ? (images[eff.imageId] || null) : null,
+      color: eff.color,
+      shininess: eff.shininess
+    };
+  });
+  return materials;
+}
+async function readSmart(file){
+  const buf = await file.arrayBuffer();
+  try { return new TextDecoder('utf-8', {fatal:true}).decode(buf); }
+  catch(e) { return new TextDecoder('windows-1251').decode(buf); }
+}
+
+// ---------- три.js сцена ----------
+const wrap = document.getElementById('canvas-wrap');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x14161a);
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 1, 20000);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+wrap.appendChild(renderer.domElement);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.dampingFactor = 0.08;
+// по просьбе пользователя — управление ТОЛЬКО на ЛКМ (вращение), колесо
+// по-прежнему зумит (это отдельный механизм OrbitControls, не завязан на
+// mouseButtons). ПКМ/СКМ раньше дублировали управление (панорама/доп.
+// зум) — теперь свободны под будущий функционал (например, отдельные
+// клики для инструментов).
+controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: undefined, RIGHT: undefined };
+controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }; // на телефоне: один палец крутит, два — зум/панорама (жест pinch не трогаем)
+// доп. слой (1) — сетка/размеры/фурнитура-без-3D видны только основной
+// камере, не "зазеркаленной" внутри Reflector (у новой камеры по
+// умолчанию включён только слой 0 — у неё этот слой останется выключен
+// без единой правки самого Reflector.js)
+const NON_REFLECTED_LAYER = 1;
+camera.layers.enable(NON_REFLECTED_LAYER);
+const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambient);
+const key = new THREE.DirectionalLight(0xffffff, 0.9); key.position.set(3,5,4); scene.add(key);
+const fill = new THREE.DirectionalLight(0xffffff, 0.35); fill.position.set(-4,2,-3); scene.add(fill);
+// "глобальный" свет — не настоящий GI (в three.js в реальном времени его
+// нет), а HemisphereLight: рассеянный свет неба сверху + отражённый от
+// пола снизу, дешёвая, но эффективная замена, чтобы сцена не была плоской
+const hemi = new THREE.HemisphereLight(0xcfe0ff, 0x50483c, 0.35);
+hemi.visible = false; // выключен по умолчанию — так была модель с самого начала
+scene.add(hemi);
+const grid = new THREE.GridHelper(4, 20, 0x2a2e35, 0x1f2227);
+grid.layers.set(NON_REFLECTED_LAYER);
+scene.add(grid);
+window.addEventListener('resize', ()=>{
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+// доп. подстраховка от зума страницы на телефоне (touch-action:none в CSS
+// не ловит специфичные Safari-жесты gesturestart/gestureend, и не всегда
+// блокирует именно двойной тап во всех браузерах) — глушим явно
+wrap.addEventListener('gesturestart', e => e.preventDefault());
+wrap.addEventListener('dblclick', e => e.preventDefault());
+let lastTapTime = 0;
+wrap.addEventListener('touchend', e => {
+  const now = Date.now();
+  if (now - lastTapTime < 300) e.preventDefault(); // двойной тап — не даём браузеру зумить
+  lastTapTime = now;
+}, { passive:false });
+// ---------- кастомный курсор — серый кружок, пульсирует над объектом с
+// анимацией, ПКМ запускает анимацию (свободна с тех пор, как управление
+// камерой ограничили одной ЛКМ, см. выше) ----------
+const customCursorEl = document.getElementById('customCursor');
+let cursorHoverAnimatable = false;
+let cursorHoverChain = null; // цепочка анимации (от ближайшего к дальнему уровню) под курсором прямо сейчас — null, если её нет
+let cursorHoverMesh = null; // сам меш под курсором — нужен обработчику ПКМ отдельно (hits видна только внутри pointermove)
+let cursorPulseT = 0;    // фаза пульсации, растёт каждый кадр
+let cursorClickBurst = 0; // 0..1 — кратковременная вспышка при срабатывании ПКМ
+
+document.addEventListener('pointermove', e => {
+  const overWrap = !!(e.target && e.target.closest && e.target.closest('#canvas-wrap'));
+  if (!overWrap){ customCursorEl.style.display = 'none'; return; }
+  customCursorEl.style.display = 'block';
+  customCursorEl.style.left = e.clientX + 'px';
+  customCursorEl.style.top = e.clientY + 'px';
+
+  if (!currentModelGroup){ cursorHoverAnimatable = false; cursorHoverChain = null; cursorHoverMesh = null; return; }
+  const rect = renderer.domElement.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1);
+  raycaster.setFromCamera(ndc, camera);
+  const hits = raycaster.intersectObjects(currentModelGroup.children, true).filter(h => h.object.isMesh);
+  // реальная проверка: есть ли у САМОГО БЛИЖНЕГО меша под курсором цепочка
+  // анимации (заполняется экспортёром — CollectAnimationChain, см.
+  // Экспорт_JSON_3D.js) — раньше здесь была заглушка (пульсировало над
+  // ЛЮБЫМ мешем, реальных данных ещё не было)
+  const chain = hits.length ? (hits[0].object.userData.animationChain || null) : null;
+  cursorHoverChain = chain;
+  cursorHoverMesh = chain ? hits[0].object : null;
+  cursorHoverAnimatable = !!chain;
+});
+
+wrap.addEventListener('contextmenu', e => {
+  e.preventDefault(); // ПКМ больше не открывает системное меню
+  if (cursorHoverAnimatable && cursorHoverMesh){
+    // TODO: составные механизмы (цепочка длиннее 1 уровня — например,
+    // складная дверь) — пока анимируется ТОЛЬКО ближайший (первый)
+    // уровень цепочки, остальные уровни игнорируются. Полная поддержка
+    // потребовала бы вложенных пивотов поверх друг друга — отдельная
+    // задача, см. [[bazis-animation]].
+    toggleDoorAnimation(cursorHoverMesh);
+  }
+});
+
+// ---------- проигрывание анимации открывания — поворотный/линейный
+// пивот вокруг МИРОВОЙ оси (AxisStart/AxisEnd уже в мировых координатах,
+// экспортёр переводит их через ToGlobal) ----------
+const animRigs = []; // все меши, для которых уже создан пивот
+let lastFrameTime = performance.now();
+
+function ensureAnimationRig(mesh){
+  if (mesh.userData.animRig) return mesh.userData.animRig;
+  const chain = mesh.userData.animationChain;
+  if (!chain || !chain.length) return null;
+  const level = chain[0]; // ближайший уровень — см. TODO выше про составные механизмы
+  // ВАЖНО: AxisStart/AxisEnd в JSON — в МИЛЛИМЕТРАХ (тот же формат, что
+  // Corners/Size у остальных объектов), а вся геометрия во вьювере
+  // построена в МЕТРАХ (MM_TO_M) — без этого перевода пивот оказывается
+  // в тысячу раз дальше, чем нужно (ровно то, что выглядело как "дверь
+  // улетела в космос").
+  const axisStart = new THREE.Vector3(level.AxisStart[0], level.AxisStart[1], level.AxisStart[2]).multiplyScalar(MM_TO_M);
+  const axisEnd = new THREE.Vector3(level.AxisEnd[0], level.AxisEnd[1], level.AxisEnd[2]).multiplyScalar(MM_TO_M);
+  const axisDir = axisEnd.clone().sub(axisStart).normalize();
+
+  // смещение поперёк оси (level.DoorShift, мм из Базиса) — едет вдоль
+  // "лицевой" нормали САМОЙ панели (decorNormals, та же честная мировая
+  // нормаль, что использует "разрез", см. buildPanelMesh/
+  // buildContourPanelMesh) — это и есть направление "к соседней
+  // панели/от неё", т.к. нормаль торчит перпендикулярно толщине двери,
+  // а не вдоль оси вращения. Предпочитаем decorNormals.max, .min как
+  // фолбэк. ЗНАК (что именно "к панели" даёт Base is через + или -)
+  // — гипотеза, не подтверждена натурным тестом; если едет не в ту
+  // сторону — поменять местами .max/.min ниже, менять знак самого
+  // DoorShift не нужно.
+  const dn = mesh.userData.decorNormals;
+  const shiftDir = dn ? (dn.max || dn.min) : null;
+  if (!shiftDir) console.log('[анимация] нет decorNormals у меша — DoorShift будет проигнорирован (нет направления)');
+
+  mesh.geometry.computeBoundingBox();
+  const bb = mesh.geometry.boundingBox;
+  const bbCenter = new THREE.Vector3(); bb.getCenter(bbCenter);
+  console.log('[анимация] AxisStart (мир, м):', axisStart.x.toFixed(4), axisStart.y.toFixed(4), axisStart.z.toFixed(4));
+  console.log('[анимация] AxisEnd (мир, м):', axisEnd.x.toFixed(4), axisEnd.y.toFixed(4), axisEnd.z.toFixed(4));
+  console.log('[анимация] bbox самой двери (мир, м): min', bb.min.x.toFixed(4), bb.min.y.toFixed(4), bb.min.z.toFixed(4), ' max', bb.max.x.toFixed(4), bb.max.y.toFixed(4), bb.max.z.toFixed(4));
+  console.log('[анимация] центр bbox двери:', bbCenter.x.toFixed(4), bbCenter.y.toFixed(4), bbCenter.z.toFixed(4));
+  console.log('[анимация] Distance(мм)/DoorAngle/DoorShift из Base is:', level.Distance, level.DoorAngle, level.DoorShift);
+
+  // ВРЕМЕННЫЙ ОТЛАДОЧНЫЙ МАРКЕР — красная линия оси + жёлтая точка на
+  // AxisStart, поверх всего остального (depthTest выкл, чтобы не
+  // терялось внутри детали). Убрать, когда ось подтвердится точной.
+  const axisLineGeo = new THREE.BufferGeometry().setFromPoints([axisStart, axisEnd]);
+  const axisLineMat = new THREE.LineBasicMaterial({color:0xff0000, depthTest:false, linewidth:3});
+  const axisLine = new THREE.Line(axisLineGeo, axisLineMat);
+  axisLine.renderOrder = 999;
+  scene.add(axisLine);
+  const axisDotGeo = new THREE.SphereGeometry(0.02, 12, 12);
+  const axisDotMat = new THREE.MeshBasicMaterial({color:0xffff00, depthTest:false});
+  const axisDot = new THREE.Mesh(axisDotGeo, axisDotMat);
+  axisDot.position.copy(axisStart);
+  axisDot.renderOrder = 999;
+  scene.add(axisDot);
+
+  // стандартный приём "пивот в точке оси": группа стоит В МИРОВОЙ точке
+  // оси, меш внутри нее сдвинут на ОБРАТНОЕ смещение — так его видимое
+  // положение в покое не меняется, а вращение/сдвиг самой группы
+  // корректно происходит вокруг реальной оси, а не вокруг мирового нуля
+  const pivot = new THREE.Group();
+  pivot.position.copy(axisStart);
+  const parent = mesh.parent;
+  parent.add(pivot);
+  parent.remove(mesh);
+  mesh.position.copy(axisStart).multiplyScalar(-1);
+  pivot.add(mesh);
+
+  const rig = { pivot, axisStart, axisDir, shiftDir: shiftDir ? shiftDir.clone() : null, level, isOpen: false, progress: 0 };
+  mesh.userData.animRig = rig;
+  animRigs.push(rig);
+  return rig;
+}
+
+function toggleDoorAnimation(mesh){
+  const rig = ensureAnimationRig(mesh);
+  if (!rig) return;
+  rig.isOpen = !rig.isOpen;
+}
+
+function updateAnimationRigs(dt){
+  animRigs.forEach(rig => {
+    const target = rig.isOpen ? 1 : 0;
+    const duration = Math.max(0.05, Number(rig.level.Duration) || 1); // секунды на полный ход
+    const speed = 1 / duration;
+    if (rig.progress < target) rig.progress = Math.min(target, rig.progress + speed*dt);
+    else if (rig.progress > target) rig.progress = Math.max(target, rig.progress - speed*dt);
+
+    // DoorShift (мм из Базиса) — сдвиг ПОПЕРЁК оси, вдоль лицевой нормали
+    // самой панели (rig.shiftDir, см. ensureAnimationRig), нарастает вместе
+    // с прогрессом открывания, как и поворот/линейный ход. 0 = нет сдвига.
+    const shiftM = (Number(rig.level.DoorShift) || 0) * MM_TO_M;
+
+    if (rig.level.AnimType === 2){
+      // линейная (ящик) — сдвиг вдоль оси на Distance*progress
+      const distM = (Number(rig.level.Distance) || 0) * MM_TO_M;
+      rig.pivot.position.copy(rig.axisStart).addScaledVector(rig.axisDir, distM * rig.progress);
+      if (rig.shiftDir) rig.pivot.position.addScaledVector(rig.shiftDir, shiftM * rig.progress);
+    } else {
+      // поворотная (дверь), AnimType===1 и любое другое значение по умолчанию —
+      // поворот вокруг оси на DoorAngle*progress градусов
+      const angleDeg = (Number(rig.level.DoorAngle) || 90) * rig.progress;
+      rig.pivot.position.copy(rig.axisStart);
+      if (rig.shiftDir) rig.pivot.position.addScaledVector(rig.shiftDir, shiftM * rig.progress);
+      rig.pivot.quaternion.setFromAxisAngle(rig.axisDir, THREE.MathUtils.degToRad(angleDeg));
+    }
+  });
+}
+
+function updateCustomCursor(){
+  cursorPulseT += 0.06;
+  cursorClickBurst = Math.max(0, cursorClickBurst - 0.05);
+  if (cursorHoverAnimatable){
+    const pulse = (Math.sin(cursorPulseT) + 1) / 2; // 0..1
+    const size = 22 + pulse*14 + cursorClickBurst*20;
+    const opacity = Math.min(1, 0.3 + pulse*0.7 + cursorClickBurst*0.3); // 0.3..1.0 (30%..100%)
+    customCursorEl.style.width = size + 'px';
+    customCursorEl.style.height = size + 'px';
+    customCursorEl.style.opacity = opacity;
+  } else {
+    customCursorEl.style.width = '22px';
+    customCursorEl.style.height = '22px';
+    customCursorEl.style.opacity = '0.3';
+  }
+}
+
+(function animate(){
+  requestAnimationFrame(animate);
+  const now = performance.now();
+  const dt = Math.min(0.1, (now - lastFrameTime) / 1000); // секунды, ограничено сверху (защита от скачка при смене вкладки)
+  lastFrameTime = now;
+  controls.update();
+  updateCustomCursor();
+  updateAnimationRigs(dt);
+  updateCutawayFollow(); // "Разрез" — живой, следует за камерой/центром вращения
+  renderer.render(scene,camera);
+})();
+
+let currentModelGroup = null;
+let currentEnvTarget = null; // кубическая текстура окружения для зеркала/хрома
+let fullSceneView = null; // {center, maxDim} всей сцены — для кнопки "Сбросить вид"
+
+// ---------- ДВЕ независимые плоскости среза ----------
+// 1. cutPlane — "Разрез плоскостью", РУЧНАЯ, как было изначально: ставится
+//    кликом по модели, дальше стоит статично, пока не переставить/подвинуть
+//    заново. Восстановлено 2026-08-14 (была временно переделана в
+//    авто-следящую по ошибке — пользователь имел в виду ПЕРЕНЕСТИ эту
+//    авто-логику на кнопку "Разрез", а не переделывать саму "Разрез
+//    плоскостью").
+// 2. cutawayPlane — замена старой кнопки "Разрез" (которая прятала грани по
+//    нормали — не годилось для тонких панелей, см. docs/materials.md).
+//    Теперь тоже честная плоскость отсечения, но ЖИВАЯ: центр — текущий
+//    центр вращения (controls.target), нормаль — всегда на камеру,
+//    пересчитывается каждый кадр (updateCutawayFollow).
+// Обе плоскости одновременно сидят в clippingPlanes КАЖДОГО материала —
+// поэтому чтобы одна не резала сцену, пока её тумблер выключен, её просто
+// "паркуют" (constant = PARK_CONSTANT, дальше любых реальных размеров
+// сцены) вместо того, чтобы дёргать renderer.localClippingEnabled — тот
+// теперь общий на обе и включён, если активна ХОТЬ ОДНА (syncGlobalClipping).
+const PARK_CONSTANT = 1e9;
+const cutPlane = new THREE.Plane(new THREE.Vector3(0,0,1), PARK_CONSTANT);
+const cutawayPlane = new THREE.Plane(new THREE.Vector3(0,0,1), PARK_CONSTANT);
+let cutPlaneOn = false; // "Разрез плоскостью" — тумблер
+let cutawayOn = false; // "Разрез" — тумблер
+function syncGlobalClipping(){
+  renderer.localClippingEnabled = cutPlaneOn || cutawayOn;
+}
+
+// ---- "Разрез плоскостью" (ручная) — крышка + видимый диск-индикатор ----
+const cutPlaneReal = new THREE.Plane(new THREE.Vector3(0,0,1), 0); // авторитетное состояние — что реально "поставлено" (place/flip/ближе/дальше пишут сюда)
+const cutCapGroup = new THREE.Group(); // "крышки" среза — ОТДЕЛЬНАЯ группа, не дети панелей
+                                         // (иначе гигантские плоскости ломают bbox панели)
+scene.add(cutCapGroup);
+cutCapGroup.visible = false;
+let placingCutPlane = false; // ждём следующий клик, чтобы поставить плоскость туда
+
+// ---- радиус среза (по просьбе пользователя — иначе крышка может
+// залить весь пол комнаты и просесть по производительности) ----
+const cutRadius = 2.0; // фиксированный радиус — ползунок убран по просьбе пользователя, при необходимости менять тут
+const cutCenterRaw = new THREE.Vector3(); // точка клика — источник истины, проецируется на текущую cutPlane при каждом обновлении
+const cutCenterUniformValue = new THREE.Vector3(); // общий live-объект — мутируем на месте, шейдеры сами подхватят на след. кадре
+const cutUAxisUniform = new THREE.Vector3(1,0,0); // локальные оси плоскости среза — для квадратного теста
+const cutVAxisUniform = new THREE.Vector3(0,1,0);
+const radiusUniformRefs = []; // {radius:{value}, enabled:{value}} — по одному на материал крышки каждой панели
+
+// ограничивает крышку среза КВАДРАТОМ со стороной 2×cutRadius (в локальных
+// осях плоскости) вокруг точки клика — визуально пользователь видит круг
+// (buildCutVisualDisc ниже), но проверка в шейдере квадратная: круглый тест
+// (distance()) ломал срез на практике, квадрат — надёжнее и дешевле (без
+// sqrt). discard во фрагментном шейдере — общий приём, есть своя копия и у
+// cutaway-крышек ниже (applyCutawayRadiusDiscardToCapMaterial).
+function applyRadiusDiscardToCapMaterial(mat){
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uCutCenter = { value: cutCenterUniformValue };
+    shader.uniforms.uCutU = { value: cutUAxisUniform };
+    shader.uniforms.uCutV = { value: cutVAxisUniform };
+    shader.uniforms.uCutRadius = { value: cutRadius };
+    shader.uniforms.uCutRadiusEnabled = { value: false };
+    radiusUniformRefs.push({ radius: shader.uniforms.uCutRadius, enabled: shader.uniforms.uCutRadiusEnabled });
+    shader.vertexShader = 'varying vec3 vRadiusWorldPos;\n' + shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+      vRadiusWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+    );
+    shader.fragmentShader = 'varying vec3 vRadiusWorldPos;\nuniform vec3 uCutCenter;\nuniform vec3 uCutU;\nuniform vec3 uCutV;\nuniform float uCutRadius;\nuniform bool uCutRadiusEnabled;\n' + shader.fragmentShader.replace(
+      '#include <clipping_planes_fragment>',
+      `#include <clipping_planes_fragment>
+      if (uCutRadiusEnabled) {
+        vec3 cutRel = vRadiusWorldPos - uCutCenter;
+        float cutLu = dot(cutRel, uCutU);
+        float cutLv = dot(cutRel, uCutV);
+        if (abs(cutLu) > uCutRadius || abs(cutLv) > uCutRadius) discard;
+      }`
+    );
+  };
+  mat.needsUpdate = true;
+}
+
+// визуальный индикатор плоскости среза — полупрозрачный белый круг с
+// пунктирной красной границей, показывает реальный радиус действия
+function buildCutVisualDisc(){
+  const group = new THREE.Group();
+  const fillGeo = new THREE.CircleGeometry(1, 64);
+  const fillMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.06, side: THREE.DoubleSide, depthWrite: false });
+  group.add(new THREE.Mesh(fillGeo, fillMat));
+
+  const N = 64, pts = [];
+  for (let i = 0; i <= N; i++){
+    const a = (i/N) * Math.PI * 2;
+    pts.push(new THREE.Vector3(Math.cos(a), Math.sin(a), 0));
+  }
+  const borderGeo = new THREE.BufferGeometry().setFromPoints(pts);
+  const borderMat = new THREE.LineDashedMaterial({ color: 0xff3333, dashSize: 0.05, gapSize: 0.05, transparent: true, depthWrite: false });
+  const borderLine = new THREE.LineLoop(borderGeo, borderMat);
+  borderLine.computeLineDistances();
+  group.add(borderLine);
+
+  group.visible = false;
+  group.renderOrder = 999;
+  return group;
+}
+const cutVisualDisc = buildCutVisualDisc();
+scene.add(cutVisualDisc);
+
+// пересчитывает центр (проекция точки клика на ТЕКУЩУЮ плоскость —
+// актуально после "Ближе"/"Дальше"/"Перевернуть сторону"), позицию и
+// ориентацию видимого диска, и синхронизирует все uniform'ы радиуса —
+// вызывается при любом изменении плоскости/радиуса/тумблера
+function updateCutVisuals(){
+  const d = cutPlane.distanceToPoint(cutCenterRaw);
+  const center = cutCenterRaw.clone().addScaledVector(cutPlane.normal, -d);
+  cutCenterUniformValue.copy(center);
+  // те же оси, что использует buildCutCapGeometryForMesh при проекции в 2D —
+  // держим квадратный тест в шейдере согласованным с формой самой крышки
+  const n = cutPlane.normal;
+  const ref = Math.abs(n.x) < 0.9 ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,1,0);
+  cutUAxisUniform.crossVectors(ref, n).normalize();
+  cutVAxisUniform.crossVectors(n, cutUAxisUniform).normalize();
+  cutVisualDisc.position.copy(center);
+  cutVisualDisc.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), cutPlane.normal);
+  cutVisualDisc.scale.set(cutRadius, cutRadius, 1);
+  cutVisualDisc.visible = cutPlaneOn;
+  radiusUniformRefs.forEach(u => { u.radius.value = cutRadius; u.enabled.value = cutPlaneOn; });
+}
+
+// применяет авторитетное состояние (cutPlaneReal) к реальной cutPlane, либо
+// "паркует" её (см. PARK_CONSTANT), если тумблер выключен — вызывать после
+// ЛЮБОГО изменения размещения/тумблера/флипа/сдвига
+function syncCutPlane(){
+  if (cutPlaneOn){ cutPlane.copy(cutPlaneReal); }
+  else { cutPlane.normal.set(0,0,1); cutPlane.constant = PARK_CONSTANT; }
+  cutCapGroup.visible = cutPlaneOn;
+  syncGlobalClipping();
+  rebuildCutCaps(); // пересчитывает геометрию крышек под новую плоскость + вызывает updateCutVisuals()
+}
+
+// ---- "Разрез" (была Sims-подобная по нормали, теперь та же честная
+// плоскость отсечения, что и "Разрез плоскостью", но ЖИВАЯ) ----
+const cutawayCapGroup = new THREE.Group();
+scene.add(cutawayCapGroup);
+cutawayCapGroup.visible = false;
+const cutawayCenterUniformValue = new THREE.Vector3();
+const cutawayUAxisUniform = new THREE.Vector3(1,0,0);
+const cutawayVAxisUniform = new THREE.Vector3(0,1,0);
+const cutawayRadiusUniformRefs = [];
+let currentCutawayCapSources = []; // {geo, capMesh} — пересобираются при каждой новой модели, см. loadScene
+
+// копия applyRadiusDiscardToCapMaterial под cutaway-уniform'ы — не стал
+// параметризовать общую функцию, чтобы не усложнять её сигнатуру ради
+// одного дополнительного потребителя
+function applyCutawayRadiusDiscardToCapMaterial(mat){
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uCutCenter = { value: cutawayCenterUniformValue };
+    shader.uniforms.uCutU = { value: cutawayUAxisUniform };
+    shader.uniforms.uCutV = { value: cutawayVAxisUniform };
+    shader.uniforms.uCutRadius = { value: cutRadius };
+    shader.uniforms.uCutRadiusEnabled = { value: false };
+    cutawayRadiusUniformRefs.push({ radius: shader.uniforms.uCutRadius, enabled: shader.uniforms.uCutRadiusEnabled });
+    shader.vertexShader = 'varying vec3 vRadiusWorldPos;\n' + shader.vertexShader.replace(
+      '#include <begin_vertex>',
+      `#include <begin_vertex>
+      vRadiusWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;`
+    );
+    shader.fragmentShader = 'varying vec3 vRadiusWorldPos;\nuniform vec3 uCutCenter;\nuniform vec3 uCutU;\nuniform vec3 uCutV;\nuniform float uCutRadius;\nuniform bool uCutRadiusEnabled;\n' + shader.fragmentShader.replace(
+      '#include <clipping_planes_fragment>',
+      `#include <clipping_planes_fragment>
+      if (uCutRadiusEnabled) {
+        vec3 cutRel = vRadiusWorldPos - uCutCenter;
+        float cutLu = dot(cutRel, uCutU);
+        float cutLv = dot(cutRel, uCutV);
+        if (abs(cutLu) > uCutRadius || abs(cutLv) > uCutRadius) discard;
+      }`
+    );
+  };
+  mat.needsUpdate = true;
+}
+
+function addCutawayCap(mesh, geo, sourceMat){
+  const capMat = sourceMat.clone();
+  capMat.clippingPlanes = [cutPlane]; // своя (cutaway) плоскость крышку не режет, а вот ручную "Разрез плоскостью" — пусть режет, если та тоже активна
+  capMat.polygonOffset = false;
+  capMat.side = THREE.DoubleSide;
+  applyCutawayRadiusDiscardToCapMaterial(capMat);
+  const capMesh = new THREE.Mesh(new THREE.BufferGeometry(), capMat);
+  capMesh.userData.isCutawayCap = true;
+  cutawayCapGroup.add(capMesh);
+  currentCutawayCapSources.push({ geo, capMesh });
+}
+
+function rebuildCutawayCaps(){
+  currentCutawayCapSources.forEach(({geo, capMesh}) => {
+    const newGeo = buildCutCapGeometryForMesh(geo, cutawayPlane); // та же честная геометрия сечения, что и у ручного среза
+    if (capMesh.geometry) capMesh.geometry.dispose();
+    capMesh.geometry = newGeo;
+  });
+  updateCutawayVisuals();
+}
+
+function updateCutawayVisuals(){
+  const n = cutawayPlane.normal;
+  const ref = Math.abs(n.x) < 0.9 ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,1,0);
+  cutawayUAxisUniform.crossVectors(ref, n).normalize();
+  cutawayVAxisUniform.crossVectors(n, cutawayUAxisUniform).normalize();
+  cutawayCenterUniformValue.copy(controls.target);
+  cutawayRadiusUniformRefs.forEach(u => { u.radius.value = cutRadius; u.enabled.value = cutawayOn; });
+}
+
+// пересчитывает cutawayPlane каждый кадр, пока "Разрез" включён: центр —
+// текущий центр вращения (controls.target, переставляется кликом по
+// объекту — см. "клик по объекту" ниже), нормаль — направление взгляда
+// камеры. Вызывается из главного цикла animate(), не по событию 'change' у
+// controls — так плоскость следует и за дрифтом camera.getWorldDirection
+// без damping-эффектов, и не нужно отдельно ловить конец вращения.
+function updateCutawayFollow(){
+  if (!cutawayOn) return;
+  const camDir = new THREE.Vector3();
+  camera.getWorldDirection(camDir);
+  cutawayPlane.setFromNormalAndCoplanarPoint(camDir, controls.target);
+  rebuildCutawayCaps();
+}
+
+// ---------- клик по объекту — вращение вокруг него ----------
+const raycaster = new THREE.Raycaster();
+const mouseNdc = new THREE.Vector2();
+let pointerDownPos = null;
+
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return; // только ЛКМ — ПКМ уже занята запуском анимации (см. contextmenu ниже)
+  pointerDownPos = {x:e.clientX, y:e.clientY};
+});
+renderer.domElement.addEventListener('pointerup', e => {
+  if (e.button !== 0) return; // см. комментарий в pointerdown выше
+  if (!pointerDownPos) return;
+  const moved = Math.hypot(e.clientX-pointerDownPos.x, e.clientY-pointerDownPos.y);
+  pointerDownPos = null;
+  if (moved > 5 || !currentModelGroup) return; // это было вращение мышью, не клик
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  mouseNdc.x = ((e.clientX-rect.left)/rect.width)*2 - 1;
+  mouseNdc.y = -((e.clientY-rect.top)/rect.height)*2 + 1;
+  raycaster.setFromCamera(mouseNdc, camera);
+  const hits = raycaster.intersectObjects(currentModelGroup.children, true)
+    .filter(h => h.object.isMesh);
+  if (!hits.length) return;
+
+  if (placingCutPlane){
+    // плоскость ставим В ТОЧКЕ клика, нормалью "на камеру" — режем всё,
+    // что окажется между камерой и этой точкой
+    const camDir = new THREE.Vector3();
+    camera.getWorldDirection(camDir);
+    cutPlaneReal.setFromNormalAndCoplanarPoint(camDir, hits[0].point);
+    cutCenterRaw.copy(hits[0].point); // центр диска среза — сама точка клика
+    placingCutPlane = false;
+    document.getElementById('cutPlaceBtn').textContent = 'Поставить плоскость среза';
+    cutPlaneOn = true;
+    document.getElementById('cutToggleBtn').textContent = 'Разрез плоскостью: вкл';
+    syncCutPlane();
+    return;
+  }
+
+  const box = new THREE.Box3().setFromObject(hits[0].object);
+  const center = box.getCenter(new THREE.Vector3());
+  controls.target.copy(center);
+  controls.update();
+});
+
+
+
+// ============================================================
+// DAE: собрать список кандидатов-фурнитуры с настоящей геометрией
+// ============================================================
+function collectDaeCandidates(root){
+  root.updateMatrixWorld(true);
+  const candidates = [];
+
+  // один проход (пост-ордер снизу вверх) вместо traverse-внутри-traverse —
+  // раньше для КАЖДОГО именованного узла заново обходили весь его
+  // поддерево целиком, что на большом .dae (два стола, тысячи узлов)
+  // давало квадратичную сложность и реально вешало браузер. Теперь
+  // максимум вершин в поддереве считается снизу вверх за один проход —
+  // O(n) вместо O(n²).
+  function visit(obj){
+    let maxVerts = 0;
+    if (obj.isMesh && obj.geometry && obj.geometry.attributes.position){
+      maxVerts = obj.geometry.attributes.position.count;
+    }
+    for (let i = 0; i < obj.children.length; i++){
+      const childMax = visit(obj.children[i]);
+      if (childMax > maxVerts) maxVerts = childMax;
+    }
+    if (obj.name && maxVerts > 20){ // реальная форма, не служебный примитив
+      const box = new THREE.Box3().setFromObject(obj);
+      const center = box.getCenter(new THREE.Vector3());
+      candidates.push({ name:obj.name, normName:normalizeName(obj.name), object:obj, center, used:false, verts:maxVerts });
+    }
+    return maxVerts;
+  }
+  visit(root);
+
+  return candidates;
+}
+const MATCH_DIST_THRESHOLD = 0.15; // метров — допуск при выборе ИСТОЧНИКА формы (разово на имя)
+
+function matchFastener(jsonCenter, normName, candidates){
+  // ВАЖНО: для извлечения формы (extractLocalTemplate) нужен узел .dae,
+  // который РЕАЛЬНО соответствует позиции текущего JSON-элемента — иначе
+  // локальный фрейм считается неверно и вся форма штампуется со сдвигом
+  // у ВСЕХ копий сразу (баг был найден на практике: "вся фурнитура левее
+  // шкафа"). Сравнение по позиции нужно только здесь, один раз на имя —
+  // дальнейшая расстановка копий .dae больше не трогает.
+  let best=null, bestDist=Infinity;
+  candidates.forEach(c=>{
+    if (c.normName!==normName) return;
+    const d = c.center.distanceTo(jsonCenter);
+    if (d<bestDist){ bestDist=d; best=c; }
+  });
+  return (best && bestDist<MATCH_DIST_THRESHOLD) ? best : null;
+}
+
+// ============================================================
+// "Штамп" фурнитуры: матрица локального фрейма из 8 угловых точек
+// JSON-элемента (тот же приём, что спас нас от багов с зеркалированием
+// панелей — работает со СТРУКТУРНЫМИ локальными осями объекта, не с
+// мировыми векторами). Точка (u,v,w) в единичном кубе [0,1]^3 отображается
+// в мировую точку через эту матрицу.
+// ============================================================
+function frameMatrixFromCorners(pts){
+  const origin = pts[0];
+  const xAxis = pts[1].clone().sub(origin);
+  const yAxis = pts[2].clone().sub(origin);
+  const zAxis = pts[4].clone().sub(origin);
+  const m = new THREE.Matrix4();
+  m.makeBasis(xAxis, yAxis, zAxis);
+  m.setPosition(origin);
+  return m;
+}
+
+// извлечь форму фурнитуры из РЕАЛЬНОГО узла .dae в ЛОКАЛЬНЫЕ координаты
+// (относительно фрейма ТОГО JSON-элемента, чьё имя+позиция подтвердили,
+// что это именно этот физический экземпляр) — один раз на уникальное имя
+function extractLocalTemplate(daeObject, sourceFrameMatrix){
+  const inv = sourceFrameMatrix.clone().invert();
+  const parts = [];
+  daeObject.traverse(sub => {
+    if (sub.isMesh && sub.geometry && sub.geometry.attributes.position){
+      sub.updateMatrixWorld(true);
+      const posAttr = sub.geometry.attributes.position;
+      const localPositions = new Float32Array(posAttr.count*3);
+      const v = new THREE.Vector3();
+      for (let i=0;i<posAttr.count;i++){
+        v.fromBufferAttribute(posAttr, i);
+        v.applyMatrix4(sub.matrixWorld); // в мир
+        v.applyMatrix4(inv);             // в локальный юнит-куб источника
+        localPositions[i*3]=v.x; localPositions[i*3+1]=v.y; localPositions[i*3+2]=v.z;
+      }
+      let indices = null;
+      if (sub.geometry.index) indices = Array.from(sub.geometry.index.array);
+      sub.material.clippingPlanes = [cutPlane, cutawayPlane]; // разрез плоскостью — фурнитура тоже режется
+      parts.push({ positions: localPositions, indices, material: sub.material });
+    }
+  });
+  return parts;
+}
+
+// поставить сохранённый локальный шаблон в мир по фрейму ЛЮБОГО другого
+// JSON-элемента с тем же именем — .dae больше не трогаем вообще
+function instantiateTemplate(parts, targetFrameMatrix){
+  const group = new THREE.Group();
+  parts.forEach(part => {
+    const geo = new THREE.BufferGeometry();
+    const n = part.positions.length/3;
+    const outPos = new Float32Array(n*3);
+    const v = new THREE.Vector3();
+    for (let i=0;i<n;i++){
+      v.set(part.positions[i*3], part.positions[i*3+1], part.positions[i*3+2]);
+      v.applyMatrix4(targetFrameMatrix);
+      outPos[i*3]=v.x; outPos[i*3+1]=v.y; outPos[i*3+2]=v.z;
+    }
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(outPos,3));
+    if (part.indices) geo.setIndex(part.indices);
+    geo.computeVertexNormals(); // пересчёт — надёжнее, чем тащить старые
+                                  // нормали через матрицу (зеркальные копии
+                                  // меняют ориентацию граней)
+    group.add(new THREE.Mesh(geo, part.material));
+  });
+  return group;
+}
+
+
+// ============================================================
+// Меш панели: своя четвёрка вершин на грань (для нормальной UV,
+// не "растянутая" общая), с текстурой по имени материала (если нашлась
+// в .dae), иначе плоский цвет из JSON
+// ============================================================
+const NORMAL_STRENGTH = 1; // подобрать на глаз — сила рельефа от Sobel-градиента
+const BLUR_RADIUS = 2; // радиус размытия яркости перед градиентом — убирает пиксельный шум
+
+const materialTextureCache = {}; // url -> {map, normalMap} — обе из одной картинки
+function loadTexturePair(url){
+  if (materialTextureCache[url]) return materialTextureCache[url];
+
+  const map = new THREE.Texture();
+  map.wrapS = map.wrapT = THREE.MirroredRepeatWrapping;
+  map.anisotropy = renderer.capabilities.getMaxAnisotropy(); // без этого мелкие/наклонные
+                                                                // грани (вроде стенки дырки в
+                                                                // выдавливании) размываются
+  const normalMap = new THREE.Texture();
+  normalMap.wrapS = normalMap.wrapT = THREE.MirroredRepeatWrapping;
+  normalMap.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    map.image = img;
+    map.needsUpdate = true;
+
+    // честная normal-карта — оператор Собеля по яркости, не bump-трюк:
+    // для каждого пикселя считаем градиент яркости по X/Y (соседи 3x3),
+    // строим из них вектор нормали (nx,ny,nz), кодируем в RGB как обычно
+    const w = img.naturalWidth, h = img.naturalHeight;
+    if (!w || !h) return;
+    const srcCanvas = document.createElement('canvas');
+    srcCanvas.width = w; srcCanvas.height = h;
+    const srcCtx = srcCanvas.getContext('2d');
+    srcCtx.drawImage(img, 0, 0);
+    const src = srcCtx.getImageData(0,0,w,h).data;
+
+    const gray = new Float32Array(w*h);
+    for (let i=0;i<w*h;i++){
+      gray[i] = (0.299*src[i*4] + 0.587*src[i*4+1] + 0.114*src[i*4+2]) / 255;
+    }
+    function at(x,y){
+      x = x<0?0:(x>=w?w-1:x);
+      y = y<0?0:(y>=h?h-1:y);
+      return gray[y*w+x];
+    }
+
+    // размытие яркости (box blur) ДО расчёта градиента — убирает шум
+    // пиксель-в-пиксель, оставляет только крупный рельеф текстуры
+    let smoothed = gray;
+    if (BLUR_RADIUS > 0){
+      smoothed = new Float32Array(w*h);
+      const r = BLUR_RADIUS;
+      for (let y=0;y<h;y++){
+        for (let x=0;x<w;x++){
+          let sum=0, cnt=0;
+          for (let dy=-r;dy<=r;dy++){
+            for (let dx=-r;dx<=r;dx++){
+              sum += at(x+dx,y+dy); cnt++;
+            }
+          }
+          smoothed[y*w+x] = sum/cnt;
+        }
+      }
+    }
+    function atSmoothed(x,y){
+      x = x<0?0:(x>=w?w-1:x);
+      y = y<0?0:(y>=h?h-1:y);
+      return smoothed[y*w+x];
+    }
+
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = w; outCanvas.height = h;
+    const outCtx = outCanvas.getContext('2d');
+    const out = outCtx.createImageData(w,h);
+    for (let y=0;y<h;y++){
+      for (let x=0;x<w;x++){
+        const gx = (atSmoothed(x+1,y-1)+2*atSmoothed(x+1,y)+atSmoothed(x+1,y+1)) - (atSmoothed(x-1,y-1)+2*atSmoothed(x-1,y)+atSmoothed(x-1,y+1));
+        const gy = (atSmoothed(x-1,y+1)+2*atSmoothed(x,y+1)+atSmoothed(x+1,y+1)) - (atSmoothed(x-1,y-1)+2*atSmoothed(x,y-1)+atSmoothed(x+1,y-1));
+        let nx = -gx*NORMAL_STRENGTH, ny = -gy*NORMAL_STRENGTH, nz = 1.0;
+        const len = Math.sqrt(nx*nx+ny*ny+nz*nz);
+        nx/=len; ny/=len; nz/=len;
+        const idx = (y*w+x)*4;
+        out.data[idx]   = Math.round((nx*0.5+0.5)*255);
+        out.data[idx+1] = Math.round((ny*0.5+0.5)*255);
+        out.data[idx+2] = Math.round((nz*0.5+0.5)*255);
+        out.data[idx+3] = 255;
+      }
+    }
+    outCtx.putImageData(out,0,0);
+    normalMap.image = outCanvas;
+    normalMap.needsUpdate = true;
+  };
+  img.src = url;
+
+  const pair = { map, normalMap };
+  materialTextureCache[url] = pair;
+  return pair;
+}
+
+
+// ============================================================
+// Процедурный шум для торца (тип "шум" в material_config.js, edge.mode
+// === "noise") — два-три цвета, размытый случайный узор (не пиксельный),
+// бесшовный по построению (сэмплирование с оборачиванием координат —
+// "тор", а не clamp по краю). Крупное зерно — считаем шум на НИЗКОМ
+// разрешении и увеличиваем билинейно (не просто масштабируем картинку
+// целиком — крупные бесформенные пятна, как настоящая ДСП-стружка).
+// Третий (тёмный/чёрный) цвет подмешивается в самые тёмные места узора.
+// Заодно строим bump-карту из ТОГО ЖЕ узора — тёмное физически "ниже"
+// (не только цветом отличается, но и видимым рельефом).
+// Кэш по цветам — генерируется один раз, дальше клонируется на каждую
+// панель (у клона свой repeat).
+// ============================================================
+const noiseTextureCache = {};
+// ============================================================
+// "Крышка" среза — ЧЕСТНАЯ геометрия (не stencil-трюк с гигантской
+// плоскостью — тот ломался на сложных сечениях: дырка близко к углу
+// детали, см. историю бага). Вместо этого: находим РЕАЛЬНЫЙ полигон
+// пересечения плоскости с мешем (по каждому треугольнику, где секутся
+// знаки расстояния до плоскости — как классический marching-triangles
+// слайс), собираем отрезки пересечения в замкнутые петли, определяем
+// внешний контур/дырки (та же логика, что и у настоящих торцевых
+// крышек — самая большая петля по площади = внешний контур, остальные
+// внутри неё = дырки) и триангулируем ТЕМИ ЖЕ функциями
+// (bridgeHolesIntoOuter + earClipTriangulate), что уже проверены на
+// реальных торцах. Пересчитывается заново при каждой перестановке
+// плоскости (rebuildCutCaps) — недорого, событие редкое (клик), не
+// каждый кадр.
+// ============================================================
+
+// собирает СЫРЫЕ отрезки пересечения плоскости с треугольниками меша
+// (по одному отрезку на пересекающий треугольник) — 3D-точки, лежащие
+// точно на плоскости
+function computeCutSegments(geo, plane){
+  const posAttr = geo.getAttribute('position');
+  const idxAttr = geo.getIndex();
+  const nTris = idxAttr ? (idxAttr.count / 3) : (posAttr.count / 3);
+  const EPS = 1e-6;
+  const idxOf = (t,k) => idxAttr ? idxAttr.getX(t*3+k) : t*3+k;
+  const vecOf = (i) => new THREE.Vector3(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
+  const distOf = (v) => plane.normal.x*v.x + plane.normal.y*v.y + plane.normal.z*v.z + plane.constant;
+
+  const segments = [];
+  for (let t = 0; t < nTris; t++){
+    const ids = [idxOf(t,0), idxOf(t,1), idxOf(t,2)];
+    const pts = ids.map(vecOf);
+    const d = pts.map(distOf);
+    const cross = [];
+    for (let e = 0; e < 3; e++){
+      const a = e, b = (e+1)%3;
+      const da = d[a], db = d[b];
+      if ((da > EPS && db < -EPS) || (da < -EPS && db > EPS)){
+        const tt = da / (da - db);
+        cross.push(pts[a].clone().lerp(pts[b], tt));
+      }
+    }
+    if (cross.length === 2) segments.push(cross);
+  }
+  return segments;
+}
+
+// собирает отрезки в замкнутые петли — РАБОТАЕТ В 2D (проекции на
+// плоскость среза, см. вызов ниже), т.к. правило обхода развилок
+// нуждается в угле, который осмыслен только в 2D-проекции.
+// СТАНДАРТНЫЙ устойчивый алгоритм трассировки граней плоского графа:
+// каждое ребро добавляется в граф ДВАЖДЫ (в обе стороны), у каждой
+// вершины исходящие рёбра сортируются по углу; попав в вершину по
+// ребру (A→B), следующее ребро обхода — СЛЕДУЮЩЕЕ ПО КРУГУ (по углу)
+// ПОСЛЕ обратного (B→A) в списке вершины B. Это гарантированно
+// корректно проходит через РАЗВИЛКИ (когда в одной точке пересечения
+// сходится БОЛЬШЕ двух отрезков — например, плоскость среза проходит
+// рядом с ребром детали) — старая наивная версия ("бери первого
+// свободного соседа") в таких точках иногда сворачивала не на тот
+// контур: петля всё равно ЗАМЫКАЛАСЬ (поэтому счётчики точек/дырок
+// сходились), но обходила не ту форму — реальный баг, пойманный
+// пользователем (провал внутри Г-образной крышки при сложном сечении).
+function traceLoopsFromSegments2D(segments2D){
+  const keyOf = (p) => p[0].toFixed(4)+','+p[1].toFixed(4);
+  const vertByKey = new Map();
+  const canon = (p) => { const k = keyOf(p); if (!vertByKey.has(k)) vertByKey.set(k, p); return k; };
+  const adj = new Map(); // key -> [{to, angle, used}]
+  const addDirected = (aKey, bKey) => {
+    const a = vertByKey.get(aKey), b = vertByKey.get(bKey);
+    const ang = Math.atan2(b[1]-a[1], b[0]-a[0]);
+    if (!adj.has(aKey)) adj.set(aKey, []);
+    adj.get(aKey).push({ to: bKey, angle: ang, used: false });
+  };
+  segments2D.forEach(([a,b]) => {
+    const ka = canon(a), kb = canon(b);
+    if (ka === kb) return; // вырожденный отрезок нулевой длины
+    addDirected(ka, kb);
+    addDirected(kb, ka);
+  });
+  adj.forEach(list => list.sort((e1,e2) => e1.angle - e2.angle));
+
+  const loops = [];
+  adj.forEach((list, startKey) => {
+    list.forEach(firstEdge => {
+      if (firstEdge.used) return;
+      const loopPts = [vertByKey.get(startKey)];
+      let fromKey = startKey, edge = firstEdge, guard = 0;
+      while (guard++ < 200000){
+        edge.used = true;
+        const toKey = edge.to;
+        if (toKey === startKey) break; // вернулись в начало — петля замкнута
+        loopPts.push(vertByKey.get(toKey));
+        const list2 = adj.get(toKey) || [];
+        // ищем обратное ребро (toKey → fromKey) — от него отсчитываем "следующее по кругу"
+        let revIdx = list2.findIndex(e => e.to === fromKey && e.used);
+        if (revIdx === -1) revIdx = list2.findIndex(e => e.to === fromKey);
+        let next = null;
+        if (revIdx !== -1){
+          for (let step = 1; step <= list2.length; step++){
+            const cand = list2[(revIdx + step) % list2.length];
+            if (!cand.used){ next = cand; break; }
+          }
+        }
+        if (!next) next = list2.find(e => !e.used); // резерв, если обратного ребра почему-то нет
+        if (!next) break; // тупик — незамкнутый обрывок, оставляем как есть
+        fromKey = toKey;
+        edge = next;
+      }
+      if (loopPts.length >= 3) loops.push(loopPts);
+    });
+  });
+  return loops;
+}
+
+// главная функция: геометрия меша + текущая плоскость → готовый
+// THREE.BufferGeometry настоящей залитой крышки (с учётом дырок и
+// НЕСКОЛЬКИХ несвязанных областей сечения — см. ниже)
+function buildCutCapGeometryForMesh(geo, plane){
+  const segments = computeCutSegments(geo, plane);
+  if (!segments.length){ console.log('[cutcap] 0 сегментов пересечения — плоскость не задевает этот меш'); return new THREE.BufferGeometry(); }
+
+  const n = plane.normal.clone().normalize();
+  const originPt = n.clone().multiplyScalar(-plane.constant);
+  const ref = Math.abs(n.x) < 0.9 ? new THREE.Vector3(1,0,0) : new THREE.Vector3(0,1,0);
+  const u = new THREE.Vector3().crossVectors(ref, n).normalize();
+  const v = new THREE.Vector3().crossVectors(n, u).normalize();
+  const to2D = (p) => { const d = p.clone().sub(originPt); return [d.dot(u), d.dot(v)]; };
+  const to3D = (p2) => originPt.clone().addScaledVector(u, p2[0]).addScaledVector(v, p2[1]);
+
+  const segments2D = segments.map(([a,b]) => [to2D(a), to2D(b)]);
+  const signedAreaOf = (pts) => { let s=0; for(let i=0;i<pts.length;i++){ const j=(i+1)%pts.length; s += pts[i][0]*pts[j][1]-pts[j][0]*pts[i][1]; } return s/2; };
+  // ВАЖНО: трассировка граней плоского графа по построению обходит
+  // КАЖДУЮ замкнутую кривую ДВАЖДЫ — по и против часовой стрелки (это
+  // стандартно для полного разбиения плоскости на грани, у нас же
+  // просто набор кривых, вторая копия не нужна и ломает дальнейшую
+  // классификацию — реальный баг, пойманный пользователем через лог
+  // "петель: 4" вместо ожидаемых 2). Оставляем только одну ориентацию
+  // на кривую (CCW, area>0) — какая из двух копий в итоге "дырка", а
+  // какая "внешний контур", всё равно переопределяется ниже при
+  // классификации, направление на входе значения не имеет.
+  const loops2D = traceLoopsFromSegments2D(segments2D).filter(l => signedAreaOf(l) > 0);
+  console.log('[cutcap] сегментов:', segments2D.length, '→ петель (после дедупликации):', loops2D.length, loops2D.map(l=>l.length));
+  if (!loops2D.length) return new THREE.BufferGeometry();
+  const pointInPoly = (pt, poly) => {
+    let inside = false;
+    for (let i=0, j=poly.length-1; i<poly.length; j=i++){
+      const xi=poly[i][0], yi=poly[i][1], xj=poly[j][0], yj=poly[j][1];
+      const hit = ((yi>pt[1]) !== (yj>pt[1])) && (pt[0] < (xj-xi)*(pt[1]-yi)/(yj-yi+1e-12)+xi);
+      if (hit) inside = !inside;
+    }
+    return inside;
+  };
+
+  // ВАЖНО: раньше "самая большая петля = внешний контур, ВСЕ остальные
+  // = дырки" — но если плоскость режёт объект с отверстием под таким
+  // углом, что получаются ДВЕ ОТДЕЛЬНЫЕ несвязанные области (а не одна
+  // область с дыркой внутри — например, срез задевает край сквозного
+  // отверстия), эта петля ошибочно вычиталась как дырка вместо того,
+  // чтобы залиться отдельным куском — реальный баг, пойманный
+  // пользователем (провал в середине Г-образной крышки). Теперь для
+  // каждой петли, кроме самой первой в своей группе, ПРОВЕРЯЕТСЯ
+  // реальная геометрическая вложенность (точка-в-полигоне) — только
+  // тогда она дырка; иначе это отдельный самостоятельный внешний
+  // контур, обрабатывается своей собственной триангуляцией.
+  const areaOrder = loops2D.map((_,i)=>i).sort((a,b) => Math.abs(signedAreaOf(loops2D[b])) - Math.abs(signedAreaOf(loops2D[a])));
+  const used = new Array(loops2D.length).fill(false);
+  const allPositions = [], allUvs = [], allIndices = [];
+  let vOffset = 0, regionsBuilt = 0, totalHoles = 0;
+
+  areaOrder.forEach(outerIdx => {
+    if (used[outerIdx]) return;
+    used[outerIdx] = true;
+    let outerPts = loops2D[outerIdx].slice();
+    if (signedAreaOf(outerPts) < 0) outerPts.reverse(); // внешний контур — CCW
+
+    const holesPts = [];
+    loops2D.forEach((l, i) => {
+      if (i === outerIdx || used[i]) return;
+      if (!pointInPoly(l[0], outerPts)) return; // не вложена — отдельная область, не дырка ЭТОГО контура
+      used[i] = true;
+      let hh = l.slice();
+      if (signedAreaOf(hh) > 0) hh.reverse(); // дырки — CW (обратно внешнему)
+      holesPts.push(hh);
+    });
+
+    // Самопроверка: считаем ожидаемую площадь (внешний контур минус
+    // дырки) и сравниваем с реальной суммой площадей треугольников —
+    // редкая вырожденная позиция моста (точка почти совпадает с
+    // вершиной контура) может дать самопересекающуюся триангуляцию,
+    // где счётчик треугольников/петель выглядит нормально, но площадь
+    // заметно (в разы) больше ожидаемой — реальный баг, пойманный
+    // пользователем ("частый", "дырка исчезает при сближении точек").
+    // Если расхождение большое — пробуем мост заново с БОЛЬШИМ отступом
+    // (обычно снимает именно эту вырожденность) и берём лучшую попытку.
+    let expectedArea = Math.abs(signedAreaOf(outerPts));
+    holesPts.forEach(hh => { expectedArea -= Math.abs(signedAreaOf(hh)); });
+    let mergedPts2D, tris, bestDiff = Infinity;
+    for (const epsScale of [1, 5, 20, 80]){
+      const candMerged = holesPts.length ? bridgeHolesIntoOuter(outerPts, holesPts, epsScale) : outerPts;
+      const candTris = earClipTriangulate(candMerged);
+      let candArea = 0;
+      candTris.forEach(([ia,ib,ic]) => {
+        const a=candMerged[ia], b=candMerged[ib], c=candMerged[ic];
+        candArea += Math.abs((b[0]-a[0])*(c[1]-a[1]) - (c[0]-a[0])*(b[1]-a[1]))/2;
+      });
+      const diff = Math.abs(candArea - expectedArea);
+      if (diff < bestDiff){ bestDiff = diff; mergedPts2D = candMerged; tris = candTris; }
+      if (diff < expectedArea*0.02) break; // уже достаточно точно (<2% расхождения) — не пробуем дальше
+      if (!holesPts.length) break; // без дырок мост не строится вообще, epsScale не влияет — одна попытка
+    }
+    mergedPts2D.forEach(p => {
+      const p3 = to3D(p);
+      allPositions.push(p3.x, p3.y, p3.z);
+      allUvs.push(p[0]*10, p[1]*10); // ×10 плотнее — раньше 1 метр = 1 тайл давало слишком растянутую текстуру на срезе
+    });
+    tris.forEach(tri => allIndices.push(tri[0]+vOffset, tri[1]+vOffset, tri[2]+vOffset));
+    vOffset += mergedPts2D.length;
+    regionsBuilt++; totalHoles += holesPts.length;
+  });
+  console.log('[cutcap] областей сечения:', regionsBuilt, '(дырок всего:', totalHoles, ') → треугольников:', allIndices.length/3);
+  if (!allIndices.length) return new THREE.BufferGeometry();
+
+  const bufGeo = new THREE.BufferGeometry();
+  bufGeo.setAttribute('position', new THREE.Float32BufferAttribute(allPositions, 3));
+  bufGeo.setAttribute('uv', new THREE.Float32BufferAttribute(allUvs, 2));
+  bufGeo.setIndex(allIndices);
+  bufGeo.computeVertexNormals();
+  return bufGeo;
+}
+
+// регистрирует панель как источник для крышки среза — сама геометрия
+// крышки строится (и перестраивается) отдельно, в rebuildCutCaps(),
+// т.к. на момент сборки сцены плоскость среза ещё не поставлена
+// пользователем
+let currentCutCapSources = []; // {geo, capMesh} — пересобираются при каждой новой модели
+function addCutCap(mesh, geo, sourceMat){
+  const capMat = sourceMat.clone();
+  capMat.clippingPlanes = []; // крышка сама не должна резаться своей же плоскостью
+  capMat.polygonOffset = false; // честная плоская геометрия, не участвует в z-fighting Контура
+  capMat.side = THREE.DoubleSide;
+  applyRadiusDiscardToCapMaterial(capMat); // ограничивает крышку кругом радиуса cutRadius
+  const capMesh = new THREE.Mesh(new THREE.BufferGeometry(), capMat);
+  capMesh.userData.isCutCap = true;
+  cutCapGroup.add(capMesh); // отдельная группа, НЕ ребёнок панели — не ломает bbox панели (клик-фокус/fullSceneView)
+  currentCutCapSources.push({ geo, capMesh });
+}
+
+// пересчитывает ВСЕ крышки среза под текущее положение/ориентацию
+// cutPlane — вызывается при постановке/перестановке плоскости и после
+// сборки новой сцены
+function rebuildCutCaps(){
+  currentCutCapSources.forEach(({geo, capMesh}) => {
+    const newGeo = buildCutCapGeometryForMesh(geo, cutPlane);
+    if (capMesh.geometry) capMesh.geometry.dispose();
+    capMesh.geometry = newGeo;
+  });
+  updateCutVisuals();
+}
+
+function getNoiseTexture(hex1, hex2, hex3, aspectU, aspectV){
+  // aspectU/aspectV — во СКОЛЬКО РАЗ грань шире толщины по каждой оси
+  // (widthInThickness, heightInThickness) — картинка генерируется с ТОЙ
+  // ЖЕ вытянутой пропорцией, что и реальная грань, иначе квадратное
+  // зерно растягивается в полосы на длинных гранях (реальный баг,
+  // пойманный пользователем на скриншоте).
+  const key = hex1+'|'+hex2+'|'+(hex3||'')+'|'+aspectU.toFixed(2)+'|'+aspectV.toFixed(2);
+  if (noiseTextureCache[key]) return noiseTextureCache[key];
+
+  const cellsPerThickness = 40; // плотность зерна — столько ячеек на одну толщину панели (мельче зерно = больше число)
+  const maxLow = 300, maxOut = 1600; // потолок на случай очень длинных граней — не раздувать canvas бесконечно
+  const lowW = Math.min(maxLow, Math.max(4, Math.round(cellsPerThickness * aspectU)));
+  const lowH = Math.min(maxLow, Math.max(4, Math.round(cellsPerThickness * aspectV)));
+  const outW = Math.min(maxOut, Math.round(lowW * (128/cellsPerThickness)));
+  const outH = Math.min(maxOut, Math.round(lowH * (128/cellsPerThickness)));
+
+  const c1 = new THREE.Color(hex1), c2 = new THREE.Color(hex2);
+  const c3 = hex3 ? new THREE.Color(hex3) : null;
+
+  const raw = new Float32Array(lowW*lowH);
+  for (let i = 0; i < lowW*lowH; i++) raw[i] = Math.random();
+
+  // размытие с оборачиванием координат по краю (тор) — гарантирует
+  // бесшовный тайлинг сам по себе, без Mirrored-трюков
+  const blurred = new Float32Array(lowW*lowH);
+  const r = 2;
+  for (let y = 0; y < lowH; y++){
+    for (let x = 0; x < lowW; x++){
+      let sum = 0, cnt = 0;
+      for (let dy = -r; dy <= r; dy++){
+        for (let dx = -r; dx <= r; dx++){
+          const xx = (x+dx+lowW) % lowW, yy = (y+dy+lowH) % lowH;
+          sum += raw[yy*lowW+xx]; cnt++;
+        }
+      }
+      blurred[y*lowW+x] = sum/cnt;
+    }
+  }
+
+  // размытие сжимает значения к середине диапазона (усреднение) — из-за
+  // этого и тёмный третий цвет почти не срабатывал (порог t<0.3 редко
+  // достигался), и bump-рельеф выходил почти плоским. Растягиваем
+  // диапазон на полный контраст (0..1) перед использованием.
+  {
+    let minV = Infinity, maxV = -Infinity;
+    for (let i = 0; i < blurred.length; i++){
+      if (blurred[i] < minV) minV = blurred[i];
+      if (blurred[i] > maxV) maxV = blurred[i];
+    }
+    const span = (maxV - minV) || 1;
+    for (let i = 0; i < blurred.length; i++){
+      blurred[i] = (blurred[i] - minV) / span;
+    }
+  }
+
+  // билинейная выборка низкого разрешения в высокое — плавно укрупнённое
+  // зерно, не просто растянутая картинка
+  function sample(fx, fy){
+    fx = ((fx % lowW) + lowW) % lowW;
+    fy = ((fy % lowH) + lowH) % lowH;
+    const x0 = Math.floor(fx), y0 = Math.floor(fy);
+    const x1 = (x0+1) % lowW, y1 = (y0+1) % lowH;
+    const tx = fx-x0, ty = fy-y0;
+    const v00 = blurred[y0*lowW+x0], v10 = blurred[y0*lowW+x1];
+    const v01 = blurred[y1*lowW+x0], v11 = blurred[y1*lowW+x1];
+    return v00*(1-tx)*(1-ty) + v10*tx*(1-ty) + v01*(1-tx)*ty + v11*tx*ty;
+  }
+
+  const colorCanvas = document.createElement('canvas');
+  colorCanvas.width = outW; colorCanvas.height = outH;
+  const cctx = colorCanvas.getContext('2d');
+  const cimg = cctx.createImageData(outW, outH);
+
+  const bumpCanvas = document.createElement('canvas');
+  bumpCanvas.width = outW; bumpCanvas.height = outH;
+  const bctx = bumpCanvas.getContext('2d');
+  const bimg = bctx.createImageData(outW, outH);
+
+  for (let y = 0; y < outH; y++){
+    for (let x = 0; x < outW; x++){
+      const t = sample(x*lowW/outW, y*lowH/outH);
+      let rr, gg, bb;
+      if (c3 && t < 0.3){
+        // самые тёмные места узора — подмешиваем третий (тёмный) цвет
+        const tt = t/0.3;
+        rr = c3.r + (c1.r-c3.r)*tt; gg = c3.g + (c1.g-c3.g)*tt; bb = c3.b + (c1.b-c3.b)*tt;
+      } else {
+        const tt = c3 ? (t-0.3)/0.7 : t;
+        rr = c1.r + (c2.r-c1.r)*tt; gg = c1.g + (c2.g-c1.g)*tt; bb = c1.b + (c2.b-c1.b)*tt;
+      }
+      const idx = (y*outW+x)*4;
+      cimg.data[idx]   = Math.round(rr*255);
+      cimg.data[idx+1] = Math.round(gg*255);
+      cimg.data[idx+2] = Math.round(bb*255);
+      cimg.data[idx+3] = 255;
+      // bump: чем темнее (меньше t), тем "глубже" — тот же узор напрямую как высота
+      const bv = Math.round(t*255);
+      bimg.data[idx] = bv; bimg.data[idx+1] = bv; bimg.data[idx+2] = bv; bimg.data[idx+3] = 255;
+    }
+  }
+  cctx.putImageData(cimg, 0, 0);
+  bctx.putImageData(bimg, 0, 0);
+
+  const tex = new THREE.CanvasTexture(colorCanvas);
+  tex.wrapS = tex.wrapT = THREE.MirroredRepeatWrapping; // как с текстурой пласти — каждый тайл зеркален относительно соседнего
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const bumpTex = new THREE.CanvasTexture(bumpCanvas);
+  bumpTex.wrapS = bumpTex.wrapT = THREE.MirroredRepeatWrapping;
+  bumpTex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+  const result = { map: tex, bumpMap: bumpTex };
+  noiseTextureCache[key] = result;
+  return result;
+}
+
+// ============================================================
+// Определение ТИПА материала по имени — сами значения (глянец/металличность/
+// прозрачность/цвет торца) теперь не захардкожены тут, а берутся из
+// material_config.js (правится пользователем в блокноте отдельно).
+// ============================================================
+function classifyMaterialByName(materialName){
+  if (typeof MATERIAL_TYPES === 'undefined' || typeof MATERIAL_KEYWORDS === 'undefined'){
+    return null; // material_config.js не подключился — работаем без него
+  }
+  const n = (materialName || '').toLowerCase();
+  for (let i = 0; i < MATERIAL_KEYWORDS.length; i++){
+    if (n.includes(MATERIAL_KEYWORDS[i][0])){
+      const typeName = MATERIAL_KEYWORDS[i][1];
+      const cfg = MATERIAL_TYPES[typeName];
+      if (!cfg) return null;
+      const face = cfg.face || {};
+      return {
+        roughness: face.roughness !== undefined ? face.roughness : 0.8,
+        metalness: face.metalness !== undefined ? face.metalness : 0,
+        opacity: face.opacity !== undefined ? face.opacity : 1,
+        transparent: !!face.transparent,
+        isMirrorPanel: !!face.mirror,
+        edge: cfg.edge || {mode:'face'},
+        typeName: typeName
+      };
+    }
+  }
+  return null; // нет совпадения — остаёмся на общем дефолте
+}
+
+const USE_NAME_PARSING_FALLBACK = true; // на будущее — можно выключить одной строкой,
+                                          // если MaterialCategory из Base is будет всегда
+
+// строит тот же формат, что classifyMaterialByName, но из ГОТОВОГО typeName
+// (например "MaterialCategory" из JSON) — без всякого парсинга имени
+function materialConfigByType(typeName){
+  if (typeof MATERIAL_TYPES === 'undefined' || !typeName) return null;
+  const cfg = MATERIAL_TYPES[typeName];
+  if (!cfg) return null;
+  const face = cfg.face || {};
+  return {
+    roughness: face.roughness !== undefined ? face.roughness : 0.8,
+    metalness: face.metalness !== undefined ? face.metalness : 0,
+    opacity: face.opacity !== undefined ? face.opacity : 1,
+    transparent: !!face.transparent,
+    isMirrorPanel: !!face.mirror,
+    edge: cfg.edge || {mode:'face'},
+    typeName: typeName
+  };
+}
+
+// главная точка входа — приоритет: MaterialCategory из JSON (назначено
+// вручную в диалоге при экспорте в Базисе) > парсинг имени (фолбэк,
+// можно отключить через USE_NAME_PARSING_FALLBACK)
+function getMaterialConfig(el){
+  const byCategory = materialConfigByType(el.MaterialCategory);
+  if (byCategory) return byCategory;
+  if (USE_NAME_PARSING_FALLBACK) return classifyMaterialByName(el.MaterialName);
+  return null;
+}
+
+// то же самое, но с учётом ОБЛИЦОВКИ (Plastics) — если она есть, то, что
+// реально ВИДНО (тип+физика — глянец/зеркало/металличность) должно
+// определяться накладкой, а не спрятанным под ней базовым материалом.
+// Используется и для решения "строить ли зеркало" (buildMirrorFaces),
+// и для параметров обычного материала — единая точка, не расходится.
+function getEffectiveMaterialConfig(el){
+  if (el.Plastics && el.Plastics.length > 0){
+    const overlayCfg = materialConfigByType(el.Plastics[0].Category);
+    if (overlayCfg) return overlayCfg;
+  }
+  return getMaterialConfig(el);
+}
+
+// ============================================================
+// Настоящее плоское зеркало — THREE.Reflector вместо кубокарты.
+// Кубокарта (envMap) снята из одной точки в центре ВСЕЙ сцены и не
+// учитывает, где физически стоит зеркало — из-за этого отражение
+// "увеличивает" всё, что оказалось рядом с точкой съёмки. Reflector
+// рендерит сцену честно, с "зазеркаленной" камеры через плоскость самого
+// зеркала — даёт правильный 1:1 масштаб без искажений. Строим только на
+// 2 лицевых гранях (FACE_AXES.const===thicknessAxis), торцы — обычной
+// геометрией через buildPanelMesh (вызывается отдельно, эта функция
+// только про сами зеркальные плоскости).
+// ============================================================
+function buildMirrorFaces(pts, el){
+  const grp = new THREE.Group();
+  const size = (el.Size || [1,1,1]).map(s => s*MM_TO_M);
+  const thicknessAxis = size.indexOf(Math.min(...size));
+  const FACE_AXES = [
+    { const:2, u:0, v:1 }, { const:2, u:0, v:1 },
+    { const:1, u:0, v:2 }, { const:1, u:0, v:2 },
+    { const:0, u:1, v:2 }, { const:0, u:1, v:2 },
+  ];
+  const centroid = pts.reduce((a,p)=>a.clone().add(p), new THREE.Vector3()).multiplyScalar(1/8);
+
+  // если известна конкретная сторона облицовки (Plastics[0].Side) —
+  // зеркалим только ЕЁ, не обе лицевые грани сразу. Гипотеза (не проверена
+  // эмпирически, но следует из самой структуры BOX_FACES): в паре граней
+  // по одной оси чётный индекс всегда "минимальная" сторона (Side=0),
+  // нечётный — "максимальная" (Side=1). Если Side неизвестен — зеркалим
+  // обе, как раньше (безопасный фолбэк).
+  let onlyFaceIndex = null;
+  if (el.Plastics && el.Plastics.length > 0 && el.Plastics[0].Side !== null && el.Plastics[0].Side !== undefined){
+    // BOX_FACES идёт как Z-пара(0,1), Y-пара(2,3), X-пара(4,5) — то есть
+    // позиция пары в массиве это (2-ось)*2, НЕ ось*2 (была ошибка именно
+    // тут — из-за неё зеркало не строилось вообще ни при каком Side)
+    const pairStart = (2 - thicknessAxis) * 2;
+    onlyFaceIndex = pairStart + (el.Plastics[0].Side === 1 ? 1 : 0);
+  }
+
+  BOX_FACES.forEach((face,i) => {
+    const axes = FACE_AXES[i];
+    if (axes.const !== thicknessAxis) return; // только лицевые грани, не торцы
+    if (onlyFaceIndex !== null && i !== onlyFaceIndex) return; // не та сторона — пропустить
+
+    const p0=pts[face[0]], p1=pts[face[1]], p2=pts[face[2]], p3=pts[face[3]];
+    const center = p0.clone().add(p1).add(p2).add(p3).multiplyScalar(0.25);
+    const normal = new THREE.Vector3().subVectors(p1,p0).cross(new THREE.Vector3().subVectors(p3,p0)).normalize();
+    if (normal.dot(center.clone().sub(centroid)) < 0) normal.negate(); // наружу
+
+    const faceW = size[axes.u], faceH = size[axes.v];
+    const geo = new THREE.PlaneGeometry(faceW, faceH);
+    const reflector = new THREE.Reflector(geo, {
+      textureWidth: 512, textureHeight: 512,
+      color: 0x8b8b8f
+    });
+    reflector.position.copy(center).addScaledVector(normal, 0.001); // чуть наружу — иначе мерцание (z-fighting) с обычной геометрией под ней
+    reflector.quaternion.setFromUnitVectors(new THREE.Vector3(0,0,1), normal);
+    grp.add(reflector);
+  });
+
+  return grp;
+}
+
+// ============================================================
+// Общая логика материалов панели (лицо-мин/лицо-макс/торец) — вынесена
+// отдельно, чтобы не дублировать между прямоугольным путём (buildPanelMesh)
+// и путём по реальному контуру (buildContourPanelMesh) — толщина панели
+// передаётся параметром, т.к. считается по-разному в двух путях.
+// ============================================================
+function buildPanelMaterials(el, rgb, daeMaterials, textureMap, textureLoader, thicknessM){
+  const baseGuess = getMaterialConfig(el);
+  const edgeCfg = (baseGuess && baseGuess.edge) ? baseGuess.edge : {mode:'face'};
+
+  let matParams = { roughness:0.8, metalness:0.0, side:THREE.DoubleSide, clippingPlanes:[cutPlane, cutawayPlane],
+    // сдвигает грань чуть "вглубь" в буфере глубины относительно линий
+    // Контура (EdgesGeometry, та же геометрия, тот же уровень глубины) —
+    // без этого линия и грань спорят за один и тот же пиксель глубины и
+    // мерцают/пропадают в зависимости от угла обзора, особенно заметно
+    // на границе дырок (где сходится много коротких граней)
+    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 };
+  let textureURL = null;
+  if (el.TexturePath){
+    const base = el.TexturePath.split(/[\\\/]/).pop().toLowerCase();
+    if (textureMap[base]) textureURL = textureMap[base];
+  }
+  let daeEntry = null;
+  if (daeMaterials && el.MaterialName){
+    const baseMaterialName = el.MaterialName.split('\r')[0];
+    daeEntry = daeMaterials[normalizeName(baseMaterialName)];
+    if (!textureURL && daeEntry && daeEntry.textureURL) textureURL = daeEntry.textureURL;
+  }
+
+  if (textureURL){
+    const pair = loadTexturePair(textureURL);
+    matParams.map = pair.map;
+    matParams.normalMap = pair.normalMap;
+    matParams.color = new THREE.Color(0xffffff);
+  } else {
+    const fallbackRgb = decodeColor(el.MaterialColorFallback);
+    const finalRgb = fallbackRgb || rgb;
+    matParams.color = new THREE.Color(finalRgb[0], finalRgb[1], finalRgb[2]);
+  }
+
+  if (baseGuess) Object.assign(matParams, baseGuess);
+  if (daeEntry && daeEntry.shininess !== null && daeEntry.shininess !== undefined){
+    matParams.roughness = Math.max(0.05, Math.min(1, 1 - daeEntry.shininess/128));
+  }
+
+  const baseFaceMat = new THREE.MeshStandardMaterial(matParams);
+
+  // ВАЖНО: faceMatMin и faceMatMax ДОЛЖНЫ быть разными объектами (даже
+  // визуально идентичными — .clone()), иначе тумблер "Разрез" ломается:
+  // он выставляет .visible сначала одному, потом другому — если это один
+  // и тот же объект, побеждает только последнее присваивание, и то, что
+  // должно было остаться видимым, гаснет вместе с тем, что нужно спрятать.
+  // Реальный баг, пойманный пользователем ("то вся модель видна, то
+  // исчезает при вращении").
+  let faceMatMin = baseFaceMat, faceMatMax = baseFaceMat.clone();
+  faceMatMax.clippingPlanes = [cutPlane, cutawayPlane]; // ВАЖНО: THREE.Material.clone() клонирует САМИ объекты
+    // Plane внутри clippingPlanes (статичный снимок), а не ссылку на
+    // живой cutPlane — без этой строки клон навсегда застревает на
+    // положении плоскости на момент сборки сцены и не двигается вместе
+    // с реальным cutPlane. Реальный баг, пойманный пользователем через
+    // Debug-кнопку (clippingPlanes===cutPlane было false именно у
+    // клонированных материалов).
+  if (el.Plastics && el.Plastics.length > 0){
+    const overlay = el.Plastics[0];
+    let overlayParams = { roughness:0.8, metalness:0.0, side:THREE.DoubleSide, clippingPlanes:[cutPlane, cutawayPlane],
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 };
+    const overlayCfg = materialConfigByType(overlay.Category);
+    if (overlayCfg) Object.assign(overlayParams, overlayCfg);
+    const overlayRgb = decodeColor(overlay.ColorFallback);
+    overlayParams.color = overlayRgb
+      ? new THREE.Color(overlayRgb[0], overlayRgb[1], overlayRgb[2])
+      : new THREE.Color(1, 0, 1);
+    const overlayFaceMat = new THREE.MeshStandardMaterial(overlayParams);
+    if (overlay.Side === 0) faceMatMin = overlayFaceMat;
+    else if (overlay.Side === 1) faceMatMax = overlayFaceMat;
+    else { faceMatMin = overlayFaceMat; faceMatMax = overlayFaceMat.clone(); faceMatMax.clippingPlanes = [cutPlane, cutawayPlane]; }
+  }
+
+  let edgeMat = baseFaceMat;
+  if (edgeCfg.mode === 'color'){
+    edgeMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(edgeCfg.color || '#999999'),
+      roughness: matParams.roughness, metalness: matParams.metalness,
+      transparent: matParams.transparent, opacity: matParams.opacity,
+      side: THREE.DoubleSide, clippingPlanes:[cutPlane, cutawayPlane],
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1
+    });
+  } else if (edgeCfg.mode === 'texture' && edgeCfg.texture){
+    const base = edgeCfg.texture.split(/[\\\/]/).pop().toLowerCase();
+    if (textureMap[base]){
+      const pair = loadTexturePair(textureMap[base]);
+      edgeMat = new THREE.MeshStandardMaterial({
+        map: pair.map, normalMap: pair.normalMap, color: new THREE.Color(0xffffff),
+        roughness: matParams.roughness, metalness: matParams.metalness,
+        side: THREE.DoubleSide, clippingPlanes:[cutPlane, cutawayPlane],
+        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1
+      });
+    }
+  } else if (edgeCfg.mode === 'noise'){
+    const noisePair = getNoiseTexture(edgeCfg.color1 || '#c9a06a', edgeCfg.color2 || '#5a4010', edgeCfg.color3, 1, 1);
+    const noiseTex = noisePair.map.clone(); noiseTex.needsUpdate = true;
+    const bumpTex = noisePair.bumpMap.clone(); bumpTex.needsUpdate = true;
+    noiseTex.repeat.set(1/thicknessM, 1/thicknessM);
+    bumpTex.repeat.set(1/thicknessM, 1/thicknessM);
+    edgeMat = new THREE.MeshStandardMaterial({
+      map: noiseTex, bumpMap: bumpTex,
+      bumpScale: edgeCfg.bumpScale !== undefined ? edgeCfg.bumpScale : 0.003,
+      color: new THREE.Color(0xffffff),
+      roughness: matParams.roughness, metalness: matParams.metalness,
+      side: THREE.DoubleSide, clippingPlanes:[cutPlane, cutawayPlane],
+      polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1
+    });
+  }
+
+  return { faceMatMin, faceMatMax, edgeMat, baseGuess };
+}
+
+function buildPanelMesh(pts, rgb, el, daeMaterials, textureMap, textureLoader){
+  const centroid = pts.reduce((a,p)=>a.clone().add(p), new THREE.Vector3()).multiplyScalar(1/8);
+  const positions = [];
+  const uvs = [];
+  const indices = [];
+  let vIdx = 0;
+
+  // Локальные размеры объекта (X=ширина,Y=высота,Z=глубина — конвенция
+  // движка Base is для ЛЮБОГО объекта в его СОБСТВЕННОЙ системе координат,
+  // ещё до поворота/зеркалирования при сборке). Это структурный факт,
+  // который зеркалирование не может испортить — в отличие от мировых
+  // векторов/направлений, которыми определяли развёртку раньше (отсюда и
+  // была вся путаница именно на зеркальных объектах).
+  const size = (el.Size || [1,1,1]).map(s => s*MM_TO_M);
+  const thicknessAxis = size.indexOf(Math.min(...size)); // 0=X,1=Y,2=Z
+
+  // Для каждой из 6 граней BOX_FACES — какая локальная ось остаётся
+  // постоянной (нормаль грани) и какие две ей соответствуют натурально как
+  // U/V (фиксировано порядком вершин в BOX_FACES, не зависит от мира вообще)
+  const FACE_AXES = [
+    { const:2, u:0, v:1 }, { const:2, u:0, v:1 }, // z=min, z=max
+    { const:1, u:0, v:2 }, { const:1, u:0, v:2 }, // y=min, y=max
+    { const:0, u:1, v:2 }, { const:0, u:1, v:2 }, // x=min, x=max
+  ];
+  const orientation = el.TextureOrientation; // 0=не задана, 1=горизонтально, 2=вертикально
+  const faceMatIndex = []; // по каждой из 6 граней — индекс материала
+  const edgeFaceDims = {}; // индекс грани(0..5) -> {A,B} в метрах — только для торцевых граней в режиме "шум"
+  const decorNormals = {}; // 'min'/'max' -> честная мировая внешняя нормаль этой лицевой грани (для "разреза")
+
+  const baseGuess = getMaterialConfig(el);
+  const edgeCfg = (baseGuess && baseGuess.edge) ? baseGuess.edge : {mode:'face'};
+  const edgeIsUniquePerFace = false; // вернулись на общий тайл по толщине (проще, без растяжки-по-грани), просто крутим плотность зерна
+  let nextUniqueEdgeIndex = 3; // 0=торец(общий, не используется в режиме шума)/1=лицо-мин/2=лицо-макс/3+=свои торцы
+
+  BOX_FACES.forEach((face, i) => {
+    const p0=pts[face[0]], p1=pts[face[1]], p2=pts[face[2]], p3=pts[face[3]];
+    const normal = new THREE.Vector3().subVectors(p1,p0).cross(new THREE.Vector3().subVectors(p3,p0));
+    const faceCenter = p0.clone().add(p1).add(p2).add(p3).multiplyScalar(0.25);
+    const outward = normal.dot(faceCenter.clone().sub(centroid)) >= 0;
+
+    const axes = FACE_AXES[i];
+    const isDecorFace = (axes.const === thicknessAxis);
+    const A = size[axes.u]; // физическая длина ребра p0->p1 (не зависит от переворота!)
+    const B = size[axes.v]; // физическая длина ребра p0->p3
+
+    let swap = false;
+    if (isDecorFace && (orientation === 1 || orientation === 2)){
+      const vIsHeight = (axes.v === 1);
+      const wantVHeight = (orientation === 2);
+      swap = (vIsHeight !== wantVHeight);
+    } else if (!isDecorFace){
+      swap = true; // торцевая грань — безусловный поворот на 90° (трюк Base is)
+    }
+    // UV считается ВСЕГДА от исходного порядка p0,p1,p2,p3 (структурно,
+    // по FACE_AXES) — переворот для нормали ниже НЕ должен на это влиять
+    const uv = swap ? [[0,0],[0,A],[B,A],[B,0]] : [[0,0],[A,0],[A,B],[0,B]];
+
+    // (точка, UV) — жёстко связанная пара; переворот далее меняет только
+    // порядок ОБХОДА для правильной внешней нормали, не переназначает UV
+    let quad = [ {p:p0,uv:uv[0]}, {p:p1,uv:uv[1]}, {p:p2,uv:uv[2]}, {p:p3,uv:uv[3]} ];
+    if (!outward) quad = [quad[0], quad[3], quad[2], quad[1]];
+
+    quad.forEach(q => { positions.push(q.p.x,q.p.y,q.p.z); uvs.push(q.uv[0],q.uv[1]); });
+    indices.push(vIdx,vIdx+1,vIdx+2, vIdx,vIdx+2,vIdx+3);
+    vIdx += 4;
+    // decor-пара по любой оси в BOX_FACES всегда идёт как (чётный,нечётный)
+    // индекс — чётный="минимальная" сторона, нечётный="максимальная"
+    // (структурный факт самой таблицы, не мировой). Используем это, чтобы
+    // различать переднюю/заднюю лицевые грани — нужно для облицовки
+    // (Plastics), которая может стоять только на ОДНОЙ стороне.
+    if (!isDecorFace && edgeIsUniquePerFace){
+      // режим "шум" — своя, не повторяющаяся текстура на КАЖДУЮ грань
+      // торца (иначе один общий тайл размножался бы через repeat вдоль
+      // всей длины грани и давал видимую периодичность). Торец всегда
+      // swap=true (90°-поворот), поэтому реальный охват UV — (B по U, A по V)
+      const myIndex = nextUniqueEdgeIndex++;
+      edgeFaceDims[myIndex] = { uMax: B, vMax: A, thicknessM: size[thicknessAxis] };
+      faceMatIndex.push(myIndex);
+    } else {
+      faceMatIndex.push(!isDecorFace ? 0 : (i % 2 === 0 ? 1 : 2));
+      if (isDecorFace){
+        // честная мировая внешняя нормаль (с учётом флипа outward выше) —
+        // нужна для "разреза" (прячем грань, которая смотрит на камеру)
+        const trueNormal = outward ? normal.clone().normalize() : normal.clone().negate().normalize();
+        decorNormals[i % 2 === 0 ? 'min' : 'max'] = trueNormal;
+      }
+    }
+  });
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  // группы граней для ТРЁХ материалов (0=торец, 1=лицо-мин, 2=лицо-макс) —
+  // группы одного индекса не всегда идут подряд одним блоком (зависит от
+  // того, какая ось — толщина), поэтому собираем динамически
+  {
+    let groupStart = 0, groupMat = faceMatIndex[0];
+    for (let i = 1; i <= faceMatIndex.length; i++){
+      const mat = (i < faceMatIndex.length) ? faceMatIndex[i] : null;
+      if (mat !== groupMat){
+        geo.addGroup(groupStart*6, (i-groupStart)*6, groupMat);
+        groupStart = i;
+        groupMat = mat;
+      }
+    }
+  }
+
+  const { faceMatMin, faceMatMax, edgeMat } = buildPanelMaterials(el, rgb, daeMaterials, textureMap, textureLoader, size[thicknessAxis]);
+  const edgeMatsByIndex = {}; // индекс группы(3+) -> материал, только для режима "шум" (пока не задействован — edgeIsUniquePerFace=false)
+
+  // собираем итоговый массив материалов по фактически использованным
+  // индексам групп (0=торец-общий или не используется в режиме шума,
+  // 1=лицо-мин, 2=лицо-макс, 3+=свои торцы для шума)
+  const maxIndex = Math.max(2, ...faceMatIndex);
+  const materials = [];
+  for (let mi = 0; mi <= maxIndex; mi++){
+    if (mi === 0) materials.push(edgeMat);
+    else if (mi === 1) materials.push(faceMatMin);
+    else if (mi === 2) materials.push(faceMatMax);
+    else materials.push(edgeMatsByIndex[mi] || edgeMat);
+  }
+
+  const mesh = new THREE.Mesh(geo, materials);
+  mesh.userData.decorNormals = decorNormals; // для "разреза" — честные мировые нормали лицевых граней
+  mesh.userData.animationChain = el.AnimationChain || null; // для пульсирующего курсора — есть ли у объекта анимация открывания
+  addCutCap(mesh, geo, edgeMat); // "крышка" среза плоскостью — некромлёный материал (торец/срез), не пласть
+  addCutawayCap(mesh, geo, edgeMat); // то же самое, но для живого "Разреза"
+
+  // тонкий чёрный контур по рёбрам — только для "плоского режима",
+  // скрыт по умолчанию, переключается вместе со светом. Основан на
+  // геометрии, не на видимости материала — поэтому если "разрез" прячет
+  // лицевую грань, а тумблер "Контур" включён, контур этой грани всё
+  // равно останется виден (то, что и нужно) — ничего доп. делать не пришлось.
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({color:0x000000, clippingPlanes:[cutPlane, cutawayPlane]})
+  );
+  edges.visible = false;
+  edges.userData.isFlatEdges = true;
+  mesh.add(edges);
+
+  return mesh;
+}
+
+// ============================================================
+// Принудительный контур — ВСЕГДА видимый чёрный обвод (не зависит от
+// общего тумблера "Контур", в отличие от isFlatEdges выше). Готовится
+// заранее для декалей пазов/фрезеровок — как только определимся с
+// системой координат Trajectory/Contour относительно наших Corners,
+// декаль паза будет обводиться этой же функцией, чтобы её границы были
+// читаемы независимо от режима отображения.
+// ============================================================
+function buildForcedOutline(geometry, color){
+  const outline = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geometry),
+    new THREE.LineBasicMaterial({color: color !== undefined ? color : 0x000000})
+  );
+  outline.userData.isForcedOutline = true; // отдельная метка — НЕ трогается тумблером isFlatEdges
+  return outline;
+}
+
+// ============================================================
+// Построение геометрии панели по РЕАЛЬНОМУ контуру пласти (el.Contour),
+// не по прямоугольному боксу — для деталей вроде скошенного угла царги.
+// Переиспользует ту же матрицу локального фрейма, что и расстановка
+// фурнитуры (frameMatrixFromCorners) — точка (tx,ty,t) единичного куба
+// [0,1]³ → мировая точка. GMin/GMax самой пласти вычисляются как min/max
+// по точкам контура (подтверждено на реальном тесте — контур своими
+// крайними точками точно касается полного габарита панели, даже со
+// срезанным углом). Единый метод для ЛЮБОГО N≥3 точек: триангуляция
+// лицевых граней — через встроенную THREE.ShapeUtils, торцевые стенки —
+// вручную, по одной на каждое реальное ребро контура (не по воображаемому
+// прямоугольнику "по воздуху").
+// ============================================================
+// склейка сегментов контура по совпадению координат концов, а НЕ по
+// порядку в массиве Contour.Segments — Base is не гарантирует, что
+// сегменты идут по кругу подряд (тот же урок, что уже был на "Выемке по
+// маркеру" — Pos1/Pos2 соседних сегментов может быть в любом порядке)
+function chainContourSegments(segs){
+  const eq = (a,b) => Math.abs(a[0]-b[0]) < 0.01 && Math.abs(a[1]-b[1]) < 0.01;
+  const used = new Array(segs.length).fill(false);
+  const ordered = [segs[0].Pos1];
+  const edgeElemIndex = [0]; // ребро (points[i]->points[i+1]) -> оригинальный индекс в segs (= ElemIndex у Butts)
+  let current = segs[0].Pos2;
+  used[0] = true;
+  ordered.push(current);
+  for (let iter = 0; iter < segs.length - 1; iter++){
+    let found = false;
+    for (let i = 0; i < segs.length; i++){
+      if (used[i]) continue;
+      if (eq(segs[i].Pos1, current)){ current = segs[i].Pos2; used[i]=true; ordered.push(current); edgeElemIndex.push(i); found=true; break; }
+      if (eq(segs[i].Pos2, current)){ current = segs[i].Pos1; used[i]=true; ordered.push(current); edgeElemIndex.push(i); found=true; break; }
+    }
+    if (!found) break; // цепочка не сошлась — не должно случаться на нормальных данных
+  }
+  // последняя добавленная точка обычно совпадает с самой первой (контур
+  // замкнут) — убираем дубль ТОЧКИ, но НЕ индекс ребра (он как раз
+  // соответствует замыкающему ребру "последняя точка -> первая",
+  // который остаётся нужен: N точек = N рёбер, edgeElemIndex уже и так
+  // ровно нужной длины ДО этого удаления)
+  if (ordered.length > 1 && eq(ordered[0], ordered[ordered.length-1])){
+    ordered.pop();
+  }
+  return { points: ordered, edgeElemIndex };
+}
+
+// находит ВСЕ отдельные замкнутые петли в наборе сегментов (не одну) —
+// нужно для контуров с дырками (внешняя граница + отдельная незамкнутая
+// с ней петля дырки внутри, как у гайки/шайбы)
+function findAllContourLoops(segs){
+  const eq = (a,b) => Math.abs(a[0]-b[0]) < 0.01 && Math.abs(a[1]-b[1]) < 0.01;
+  const used = new Array(segs.length).fill(false);
+  const loops = [];
+  for (let start = 0; start < segs.length; start++){
+    if (used[start]) continue;
+    const points = [segs[start].Pos1];
+    const edgeElemIndex = [start];
+    let current = segs[start].Pos2;
+    used[start] = true;
+    points.push(current);
+    while (true){
+      let found = false;
+      for (let i = 0; i < segs.length; i++){
+        if (used[i]) continue;
+        if (eq(segs[i].Pos1, current)){ current = segs[i].Pos2; used[i]=true; points.push(current); edgeElemIndex.push(i); found=true; break; }
+        if (eq(segs[i].Pos2, current)){ current = segs[i].Pos1; used[i]=true; points.push(current); edgeElemIndex.push(i); found=true; break; }
+      }
+      if (!found) break;
+    }
+    if (points.length > 1 && eq(points[0], points[points.length-1])) points.pop();
+    if (points.length >= 3) loops.push({points, edgeElemIndex});
+  }
+  return loops;
+}
+
+function polygonAreaAbs(pts){
+  let a = 0;
+  for (let i = 0; i < pts.length; i++){
+    const j = (i+1) % pts.length;
+    a += pts[i][0]*pts[j][1] - pts[j][0]*pts[i][1];
+  }
+  return Math.abs(a) / 2;
+}
+
+// объединяет внешний контур и дырки в один "простой" (без дырок)
+// многоугольник через классический приём "мостик": от ближайшей точки
+// каждой дырки к ближайшей точке уже собранного многоугольника — режем
+// туда и обратно, дырка оказывается "прорезана" внутрь основного контура
+function bridgeHolesIntoOuter(outerPts, holesPts, epsScale){
+  epsScale = epsScale || 1;
+  // ВАЖНО: точку моста для КАЖДОЙ дырки ищем СРЕДИ ВСЕЙ ГРАНИЦЫ
+  // внешнего контура (проекция на каждое ребро, включая середину), а
+  // НЕ только среди готовых вершин outerPts. Раньше искали ближайшую
+  // ВЕРШИНУ — если ближайшая точка контура физически оказывалась в
+  // остром углу (а не на ровной середине ребра), мост сливался с этим
+  // углом почти в одну точку, и ear-clipping надёжно ломался именно
+  // там (частый баг, пойманный пользователем: дырка "затягивалась",
+  // когда точка моста сближалась с вершиной). Ищем НЕ среди уже
+  // "разросшегося" merged (та же причина, что раньше — вторая дырка
+  // может зацепиться за первую), а среди ОРИГИНАЛЬНОГО outerPts.
+  const bridges = holesPts.map(hole => {
+    let best = null;
+    for (let hi = 0; hi < hole.length; hi++){
+      const hp = hole[hi];
+      for (let oi = 0; oi < outerPts.length; oi++){
+        const a = outerPts[oi], b = outerPts[(oi+1) % outerPts.length];
+        const abx = b[0]-a[0], aby = b[1]-a[1];
+        const len2 = abx*abx + aby*aby || 1e-12;
+        let t = ((hp[0]-a[0])*abx + (hp[1]-a[1])*aby) / len2;
+        t = Math.max(0, Math.min(1, t)); // зажимаем в пределы отрезка [a,b]
+        const px = a[0]+abx*t, py = a[1]+aby*t;
+        const d = (px-hp[0])*(px-hp[0]) + (py-hp[1])*(py-hp[1]);
+        if (!best || d < best.dist){ best = { dist:d, seg:oi, t, point:[px,py], holeIdx:hi }; }
+      }
+    }
+    return { seg: best.seg, t: best.t, point: best.point, hole, holeIdx: best.holeIdx };
+  });
+  // вставляем от ДАЛЬНИХ сегментов к БЛИЖНИМ (по seg+t) — тогда более
+  // поздняя вставка не сдвигает индекс ещё не обработанной
+  bridges.sort((a,b) => (b.seg + b.t) - (a.seg + a.t));
+  let merged = outerPts.slice();
+  const eps = 0.001 * epsScale; // маленький отступ — снимает вырожденность (нулевая площадь моста) для ear-clipping
+  bridges.forEach(({seg, point, hole, holeIdx}) => {
+    const rotatedHole = hole.slice(holeIdx).concat(hole.slice(0, holeIdx));
+    const holeStartDup = [rotatedHole[0][0]+eps, rotatedHole[0][1]+eps];
+    const bridgePointDup = [point[0]-eps, point[1]-eps];
+    // сама точка моста (point) — НОВАЯ точка, обычно НЕ совпадающая ни
+    // с одной существующей вершиной (если только реальный ближайший
+    // край контура действительно не проходит точно через угол)
+    const insert = [point].concat(rotatedHole, [holeStartDup, bridgePointDup]);
+    merged = merged.slice(0, seg+1).concat(insert).concat(merged.slice(seg+1));
+  });
+  return merged;
+}
+
+// триангуляция "отрезанием ушей" — работает для ЛЮБОГО простого
+// многоугольника, включая невыпуклый (веер из одной точки годится
+// только для выпуклых) — нужна именно для многоугольника с "мостиком"
+// к дырке, он невыпуклый по построению в точке мостика
+function earClipTriangulate(pts2D){
+  const n = pts2D.length;
+  const cross = (o,a,b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]);
+  // допуск на шум плавающей точки — угол, реально почти прямой/выпуклый,
+  // иногда даёт исчезающе малое ОТРИЦАТЕЛЬНОЕ значение вместо нуля из-за
+  // накопленной погрешности; без допуска такой "почти-выпуклый" угол
+  // ошибочно бракуется как "не ухо", и на определённых (пограничных)
+  // положениях плоскости среза алгоритм не находит НИ ОДНОГО уха вообще
+  // и полностью сдаётся — реальный баг, пойманный пользователем
+  // (крышка среза то есть, то пропадает при движении "Ближе/Дальше", по
+  // консоли — то же число сегментов даёт то 20, то 0 треугольников)
+  const EPS = 1e-6;
+  const pointInTri = (p,a,b,c) => {
+    const d1=cross(a,b,p), d2=cross(b,c,p), d3=cross(c,a,p);
+    const hasNeg=(d1<-EPS)||(d2<-EPS)||(d3<-EPS), hasPos=(d1>EPS)||(d2>EPS)||(d3>EPS);
+    return !(hasNeg && hasPos);
+  };
+  let signedArea = 0;
+  for (let i = 0; i < n; i++){ const j=(i+1)%n; signedArea += pts2D[i][0]*pts2D[j][1]-pts2D[j][0]*pts2D[i][1]; }
+  let order = [];
+  for (let i = 0; i < n; i++) order.push(i);
+  if (signedArea < 0) order.reverse(); // ear-clipping ожидает обход против часовой
+
+  const triangles = [];
+  let guard = 0;
+  while (order.length > 3 && guard < 10000){
+    guard++;
+    let earFound = false;
+    for (let k = 0; k < order.length; k++){
+      const iPrev = order[(k-1+order.length)%order.length];
+      const iCur = order[k];
+      const iNext = order[(k+1)%order.length];
+      const a=pts2D[iPrev], b=pts2D[iCur], c=pts2D[iNext];
+      if (cross(a,b,c) <= -EPS) continue; // не выпуклый угол — не "ухо" (с допуском на шум)
+      let containsOther = false;
+      for (let m = 0; m < order.length; m++){
+        const pi = order[m];
+        if (pi===iPrev || pi===iCur || pi===iNext) continue;
+        if (pointInTri(pts2D[pi], a, b, c)){ containsOther = true; break; }
+      }
+      if (containsOther) continue;
+      triangles.push([iPrev, iCur, iNext]);
+      order.splice(k, 1);
+      earFound = true;
+      break;
+    }
+    if (!earFound) break; // подстраховка от зависания на вырожденных данных
+  }
+  if (order.length === 3){
+    triangles.push([order[0], order[1], order[2]]);
+  } else if (order.length > 3){
+    // АВАРИЙНЫЙ ФОЛБЭК: ушей больше не находится (действительно
+    // вырожденный/самопересекающийся остаток), но полностью терять
+    // геометрию (0 треугольников — дыра в крышке) хуже, чем грубый веер
+    // от первой точки — визуально почти всегда неотличимо от честной
+    // триангуляции на таких небольших остатках. Пробовали более "умный"
+    // веер (перебор всех вершин, выбор по совпадению площади) вместе с
+    // относительным eps выше — вместе дали заметный регресс (крышка
+    // резко сжималась), откачено обратно на простой вариант.
+    for (let k = 1; k < order.length - 1; k++){
+      triangles.push([order[0], order[k], order[k+1]]);
+    }
+  }
+  return triangles;
+}
+
+function buildContourPanelMesh(pts, rgb, el, daeMaterials, textureMap, textureLoader){
+  const frameMat = frameMatrixFromCorners(pts);
+  const segs = el.Contour.Segments;
+  const loops = findAllContourLoops(segs); // может быть несколько петель — внешний контур + дырки (гайка, шайба и т.п.)
+
+  let outerIdx = 0, outerArea = -1;
+  loops.forEach((loop, li) => {
+    const a = polygonAreaAbs(loop.points);
+    if (a > outerArea){ outerArea = a; outerIdx = li; }
+  });
+  const outerLoop = loops[outerIdx];
+  const holeLoops = loops.filter((_, li) => li !== outerIdx);
+
+  const buttsByElem = {};
+  if (el.Butts){ el.Butts.forEach(b => { buttsByElem[b.ElemIndex] = b; }); }
+
+  let gMinX=Infinity, gMaxX=-Infinity, gMinY=Infinity, gMaxY=-Infinity;
+  loops.forEach(loop => loop.points.forEach(p => {
+    if (p[0]<gMinX) gMinX=p[0]; if (p[0]>gMaxX) gMaxX=p[0];
+    if (p[1]<gMinY) gMinY=p[1]; if (p[1]>gMaxY) gMaxY=p[1];
+  }));
+  const spanX = (gMaxX-gMinX) || 1, spanY = (gMaxY-gMinY) || 1;
+
+  function toWorld(lx, ly, t){
+    const tx = (lx-gMinX)/spanX, ty = (ly-gMinY)/spanY;
+    return new THREE.Vector3(tx, ty, t).applyMatrix4(frameMat);
+  }
+
+  const centroidAll = (() => {
+    let sum = new THREE.Vector3(); let cnt = 0;
+    loops.forEach(loop => loop.points.forEach(p => {
+      sum.add(toWorld(p[0],p[1],0)).add(toWorld(p[0],p[1],1)); cnt += 2;
+    }));
+    return sum.multiplyScalar(1/cnt);
+  })();
+
+  const orientation = el.TextureOrientation;
+  const uvSwap = el.IsExtrusion ? false : ((orientation === 1 || orientation === 2) ? (orientation === 1) : false);
+
+  const positions = [], uvs = [], indices = [];
+  const faceGroups = [];
+  let vIdx = 0;
+
+  // ---- крышки (лицо-мин/лицо-макс) — если есть дырки, сначала "мостик",
+  // потом честная триангуляция отрезанием ушей (не веер — после мостика
+  // форма невыпуклая) ----
+  const mergedPts2D = holeLoops.length
+    ? bridgeHolesIntoOuter(outerLoop.points, holeLoops.map(h => h.points))
+    : outerLoop.points;
+  const capTriangles = earClipTriangulate(mergedPts2D);
+
+  function pushCapFace(materialIndex, tVal){
+    const pointsArr = mergedPts2D.map(p => toWorld(p[0], p[1], tVal));
+    const groupStart = indices.length;
+    const base = vIdx;
+    const sampleNormal = new THREE.Vector3().subVectors(pointsArr[1],pointsArr[0])
+      .cross(new THREE.Vector3().subVectors(pointsArr[2],pointsArr[0]));
+    const faceCenter = pointsArr.reduce((a,p)=>a.clone().add(p), new THREE.Vector3()).multiplyScalar(1/pointsArr.length);
+    const outward = sampleNormal.dot(faceCenter.clone().sub(centroidAll)) >= 0;
+    const trueNormal = (outward ? sampleNormal.clone() : sampleNormal.clone().negate()).normalize();
+
+    pointsArr.forEach((p,i) => {
+      positions.push(p.x,p.y,p.z);
+      const uLocal = mergedPts2D[i][0]*MM_TO_M, vLocal = mergedPts2D[i][1]*MM_TO_M;
+      if (uvSwap) uvs.push(vLocal, uLocal); else uvs.push(uLocal, vLocal);
+    });
+    capTriangles.forEach(tri => {
+      const t = outward ? tri : [tri[0],tri[2],tri[1]];
+      indices.push(base+t[0], base+t[1], base+t[2]);
+    });
+    vIdx += pointsArr.length;
+    faceGroups.push({start:groupStart, count:capTriangles.length*3, materialIndex});
+    return trueNormal;
+  }
+
+  // Индексы материалов здесь СОГЛАСОВАНЫ с box-панелями (buildPanelMesh):
+  // 0=edgeMat(торец), 1=faceMatMin, 2=faceMatMax — именно этот порядок
+  // жёстко ожидает updateCutaway() ("Разрез"). Раньше здесь был другой
+  // порядок ([min,max,edge]), из-за чего "Разрез" гасил не те грани у
+  // контурных панелей (объекты выдавливания и т.п.).
+  const minNormal = pushCapFace(1, 0);
+  const maxNormal = pushCapFace(2, 1);
+
+  // ---- боковые стенки — по каждому РЕАЛЬНОМУ ребру КАЖДОЙ петли
+  // (и внешнего контура, и каждой дырки — у дырки тоже есть настоящая
+  // физическая стенка, только "смотрит" внутрь полости, а не наружу) ----
+
+  function buildWallsForLoop(loop, refCenter, isHole){
+    let perimeterSoFarM = 0; // свой счётчик НА КАЖДУЮ петлю — иначе дырка
+                               // "продолжала" узор снаружи со сдвигом
+                               // вместо того, чтобы начинать заново, как
+                               // снаружи (по прямой просьбе — "внаглую"
+                               // сделать одинаково)
+    const localPts2D = loop.points;
+    const edgeElemIndex = loop.edgeElemIndex;
+    const n = localPts2D.length;
+    const nearPts = localPts2D.map(p => toWorld(p[0], p[1], 0));
+    const farPts  = localPts2D.map(p => toWorld(p[0], p[1], 1));
+
+    for (let i = 0; i < n; i++){
+      const i2 = (i+1) % n;
+      const groupStart = indices.length;
+      const base = vIdx;
+      let quad = [nearPts[i], nearPts[i2], farPts[i2], farPts[i]];
+      const qNormal = new THREE.Vector3().subVectors(quad[1],quad[0]).cross(new THREE.Vector3().subVectors(quad[3],quad[0]));
+      const qCenter = quad.reduce((a,p)=>a.clone().add(p), new THREE.Vector3()).multiplyScalar(0.25);
+      // "наружу" считается относительно СВОЕГО центра — у внешнего контура
+      // это общий центр детали, у дырки — её собственный центр. ВАЖНО:
+      // для дырки знак теста инвертирован — стенка дырки физически
+      // "наружу" (из материала в пустоту) означает нормаль, смотрящую
+      // К своему центру (внутрь полости), а не ОТ него, как у внешнего
+      // контура. Раньше тест был одинаковым для обоих случаев — стенки
+      // дырки строились с перевёрнутым виндингом, что не ломало обычный
+      // рендер (материал DoubleSide), но ломало трафаретный алгоритм
+      // "Разреза плоскостью" (старая stencil-техника, с тех пор
+      // переписана на честную геометрию сечения) именно на границе
+      // дырки — там нужен единообразный виндинг по всей замкнутой сетке.
+      const raw = qNormal.dot(qCenter.clone().sub(refCenter));
+      const outward = isHole ? (raw <= 0) : (raw >= 0);
+      if (!outward) quad = [quad[0], quad[3], quad[2], quad[1]];
+
+      const edgeLenM = Math.hypot(localPts2D[i2][0]-localPts2D[i][0], localPts2D[i2][1]-localPts2D[i][1]) * MM_TO_M;
+      const thicknessM = pts[4].distanceTo(pts[0]);
+
+      if (el.IsExtrusion){
+        const u0 = perimeterSoFarM, u1 = perimeterSoFarM + edgeLenM;
+        perimeterSoFarM = u1;
+        const quadUV = outward
+          ? [[u0,0],[u1,0],[u1,thicknessM],[u0,thicknessM]]
+          : [[u0,thicknessM],[u1,thicknessM],[u1,0],[u0,0]];
+        quad.forEach((p,qi) => { positions.push(p.x,p.y,p.z); uvs.push(quadUV[qi][0], quadUV[qi][1]); });
+        indices.push(base,base+1,base+2, base,base+2,base+3);
+        vIdx += 4;
+        faceGroups.push({start:groupStart, count:6, materialIndex: DEBUG_WALL_COLOR ? 4 : 3});
+        continue;
+      }
+
+      const hasKromka = !!buttsByElem[edgeElemIndex[i]];
+      const quadUV = hasKromka
+        ? (outward
+            ? [[0,0],[0,edgeLenM],[thicknessM,edgeLenM],[thicknessM,0]]
+            : [[0,0],[thicknessM,0],[thicknessM,edgeLenM],[0,edgeLenM]])
+        : (outward
+            ? [[0,0],[edgeLenM,0],[edgeLenM,thicknessM],[0,thicknessM]]
+            : [[0,0],[0,thicknessM],[edgeLenM,thicknessM],[edgeLenM,0]]);
+      quad.forEach((p,qi) => { positions.push(p.x,p.y,p.z); uvs.push(quadUV[qi][0], quadUV[qi][1]); });
+      indices.push(base,base+1,base+2, base,base+2,base+3);
+      vIdx += 4;
+      faceGroups.push({start:groupStart, count:6, materialIndex: hasKromka ? 3 : 0});
+    }
+  }
+
+  buildWallsForLoop(outerLoop, centroidAll, false);
+  holeLoops.forEach(hole => {
+    let sum = new THREE.Vector3(); let cnt = 0;
+    hole.points.forEach(p => { sum.add(toWorld(p[0],p[1],0)).add(toWorld(p[0],p[1],1)); cnt += 2; });
+    const holeCenter = sum.multiplyScalar(1/cnt);
+    buildWallsForLoop(hole, holeCenter, true);
+  });
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs,2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  faceGroups.forEach(g => geo.addGroup(g.start, g.count, g.materialIndex));
+
+  const thicknessM = pts[4].distanceTo(pts[0]);
+  const { faceMatMin, faceMatMax, edgeMat } = buildPanelMaterials(el, rgb, daeMaterials, textureMap, textureLoader, thicknessM);
+
+  // индекс 3 — отдельный клон faceMatMax: используется и для кромлёных
+  // стенок (hasKromka), и для стенок тела выдавливания (el.IsExtrusion,
+  // по просьбе — они должны выглядеть как торцевые заглушки/пласть, а не
+  // как некромлёный торец). Обязательно КЛОН, не тот же объект, что
+  // faceMatMax у крышек — иначе тумблер "Разрез" гасит стенки вместе с
+  // дальней крышкой (см. историю бага выше).
+  const wallMat = faceMatMax.clone();
+  wallMat.clippingPlanes = [cutPlane, cutawayPlane]; // см. комментарий выше про clone() и clippingPlanes — тот самый баг
+  // Раньше стенки прятал отдельный per-fragment шейдер-дискард
+  // (applyCutawayDiscardToWallMaterial) — нужен был только старой
+  // Sims-подобной кнопке "Разрез" (обычный material.visible не годится
+  // для замкнутого кольца стенок). Теперь у "Разреза" тоже честная
+  // плоскость отсечения (cutawayPlane, уже в clippingPlanes выше) —
+  // отдельный шейдер стенкам больше не нужен, они режутся как все.
+  const mesh = new THREE.Mesh(geo, DEBUG_WALL_COLOR
+    ? [edgeMat, faceMatMin, faceMatMax, wallMat, new THREE.MeshStandardMaterial({color:0xff00ff, side:THREE.DoubleSide})]
+    : [edgeMat, faceMatMin, faceMatMax, wallMat]);
+  mesh.userData.decorNormals = { min: minNormal, max: maxNormal };
+  mesh.userData.animationChain = el.AnimationChain || null; // для пульсирующего курсора — есть ли у объекта анимация открывания
+  addCutCap(mesh, geo, edgeMat); // крышка среза плоскостью — некромлёный материал, не пласть
+  addCutawayCap(mesh, geo, edgeMat); // то же самое, но для живого "Разреза"
+
+  const edges = new THREE.LineSegments(
+    new THREE.EdgesGeometry(geo),
+    new THREE.LineBasicMaterial({color:0x000000, clippingPlanes:[cutPlane, cutawayPlane]})
+  );
+  edges.visible = false;
+  edges.userData.isFlatEdges = true;
+  mesh.add(edges);
+
+  // Отладочные подписи номеров вершин — по кнопке "Точки". Нумерует
+  // КАЖДУЮ вершину буфера positions (включая дубликаты — у стенок они
+  // НЕ переиспользуются между соседними quad'ами специально, чтобы
+  // грани были плоскими). Полезно, когда не видно на глаз, реально ли
+  // не хватает геометрии рядом со срезом, или дело в отрисовке.
+  const pointLabels = new THREE.Group();
+  for (let i = 0; i < positions.length; i += 3){
+    const label = makeTextSprite(String(i/3), '#00e5ff');
+    label.position.set(positions[i], positions[i+1], positions[i+2]);
+    pointLabels.add(label);
+  }
+  pointLabels.visible = false;
+  pointLabels.userData.isPointLabels = true;
+  mesh.add(pointLabels);
+
+  return mesh;
+}
+
+
+
+// ============================================================
+// Текстовая подпись для размерных линий — 2D-спрайт (всегда лицом к
+// камере, не встроен в плоскость объекта), раз шрифт/курсив/масштаб
+// текста задаются в свойствах самого Base is и нам недоступны — просто
+// показываем число обычным читаемым текстом
+// ============================================================
+function makeTextSprite(text, cssColor){
+  // ВСЕГДА рисуем горизонтально, без ручного поворота внутри canvas —
+  // такой поворот резал цифры по краю (3 попытки поправить отступы не
+  // помогли). Поворот делаем средствами three.js (SpriteMaterial.rotation)
+  // отдельно, это надёжнее и не требует пересчитывать размеры вручную.
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const fontSize = 72;
+  ctx.font = `${fontSize}px sans-serif`;
+  const textW = Math.ceil(ctx.measureText(text).width) + 40;
+  const textH = fontSize + 40;
+  canvas.width = textW;
+  canvas.height = textH;
+  ctx.font = `${fontSize}px sans-serif`;
+  ctx.fillStyle = cssColor;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, textW/2, textH/2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({map:texture, depthTest:true, transparent:true});
+  const sprite = new THREE.Sprite(material);
+  const worldGlyphHeight = 0.06;
+  const scale = worldGlyphHeight / textH;
+  sprite.scale.set(textW*scale, worldGlyphHeight, 1);
+  return sprite;
+}
+
+// ============================================================
+// Размерная линия (Size3D) — полноценный "глиф": выносные линии
+// (плечи), основная линия со стрелками на дальнем краю, текст ещё
+// дальше за линией (по просьбе пользователя — не поверх линии).
+// Строится из тех же 8 угловых точек bbox, что и обычный бокс —
+// используем ФИКСИРОВАННЫЙ порядок индексов (та же схема бит x,y,z,
+// что и у панелей), чтобы вычислить нужные 4 угла независимо от
+// поворота объекта в пространстве.
+// ============================================================
+function buildDimensionGroup(pts, el, lineColorHex){
+  const grp = new THREE.Group();
+  const size = (el.Size || [1,1,1]).map(s => s*MM_TO_M);
+  const thicknessAxis = size.indexOf(Math.min(...size));
+  const remaining = [0,1,2].filter(i => i !== thicknessAxis);
+  const lengthAxis = size[remaining[0]] >= size[remaining[1]] ? remaining[0] : remaining[1];
+  const armAxis = remaining.find(i => i !== lengthAxis);
+
+  function corner(lengthBit, armBit, thickBit){
+    const bits = [0,0,0];
+    bits[lengthAxis] = lengthBit; bits[armAxis] = armBit; bits[thicknessAxis] = thickBit;
+    return pts[bits[0] + bits[1]*2 + bits[2]*4];
+  }
+
+  const nearMinArm = corner(0,0,0), nearMaxArm = corner(0,1,0); // плечо на "начале" длины
+  const farMinArm  = corner(1,0,0), farMaxArm  = corner(1,1,0); // плечо на "конце" длины
+
+  const positions = [];
+  // выносные линии (плечи) — по краям длины, во всю длину "плеча"
+  positions.push(nearMinArm.x,nearMinArm.y,nearMinArm.z, nearMaxArm.x,nearMaxArm.y,nearMaxArm.z);
+  positions.push(farMinArm.x,farMinArm.y,farMinArm.z, farMaxArm.x,farMaxArm.y,farMaxArm.z);
+  // основная линия — по дальнему краю "плеча" (там, где обычно рисуется в Base is)
+  positions.push(nearMaxArm.x,nearMaxArm.y,nearMaxArm.z, farMaxArm.x,farMaxArm.y,farMaxArm.z);
+
+  // стрелки на концах основной линии — тонкий "уголок", размер пропорционален длине
+  const lengthDir = new THREE.Vector3().subVectors(farMaxArm, nearMaxArm).normalize();
+  const armDir = new THREE.Vector3().subVectors(nearMaxArm, nearMinArm).normalize();
+  const lineLen = nearMaxArm.distanceTo(farMaxArm);
+  const arrowLen = Math.min(0.05, lineLen*0.06);
+  const arrowW = arrowLen*0.4;
+
+  function addArrow(tip, outwardDir){
+    const back = tip.clone().addScaledVector(outwardDir, -arrowLen);
+    const b1 = back.clone().addScaledVector(armDir, arrowW);
+    const b2 = back.clone().addScaledVector(armDir, -arrowW);
+    positions.push(tip.x,tip.y,tip.z, b1.x,b1.y,b1.z);
+    positions.push(tip.x,tip.y,tip.z, b2.x,b2.y,b2.z);
+  }
+  addArrow(nearMaxArm, lengthDir.clone().negate()); // стрелка у начала, смотрит "наружу"
+  addArrow(farMaxArm, lengthDir);                    // стрелка у конца, смотрит "наружу"
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  const mat = new THREE.LineBasicMaterial({color:lineColorHex});
+  grp.add(new THREE.LineSegments(geo, mat));
+
+  // текст — ЗА основной линией (дальше от "плеч"), не поверх нее
+  if (el.Value !== null && el.Value !== undefined){
+    const cssColor = '#' + lineColorHex.toString(16).padStart(6,'0');
+    // ВЕРТИКАЛЬНОСТЬ считаем по измеряемой длине (lengthDir), не по
+    // плечам — раньше сравнивал armDir, отсюда и путаница направления
+    const lengthIsVertical = Math.abs(lengthDir.y) > Math.max(Math.abs(lengthDir.x), Math.abs(lengthDir.z));
+    const valueText = String(Math.round(el.Value)); // точность после запятой не нужна
+    const sprite = makeTextSprite(valueText, cssColor);
+    if (lengthIsVertical) sprite.material.rotation = Math.PI/2;
+    const mid = nearMaxArm.clone().add(farMaxArm).multiplyScalar(0.5);
+    const armLen = nearMinArm.distanceTo(nearMaxArm);
+    const margin = Math.max(0.03, armLen*0.35);
+    sprite.position.copy(mid.addScaledVector(armDir, margin));
+    grp.add(sprite);
+  }
+
+  return grp;
+}
+
+function buildScene(data, label, daeRoot, daeMaterials, textureMap){
+  if (currentModelGroup) scene.remove(currentModelGroup);
+  cutCapGroup.clear(); // старые "крышки" среза больше не нужны — новая модель, новая геометрия
+  currentCutCapSources = [];
+  radiusUniformRefs.length = 0; // иначе список растёт при каждой загрузке новой модели
+  cutawayCapGroup.clear(); // то же самое для живого "Разреза"
+  currentCutawayCapSources = [];
+  cutawayRadiusUniformRefs.length = 0;
+  const group = new THREE.Group();
+
+  const daeCandidates = daeRoot ? collectDaeCandidates(daeRoot) : null;
+  const textureLoader = new THREE.TextureLoader();
+  const fastenerTemplates = {}; // normName -> parts[] (локальный шаблон формы) | null (пробовали, не нашли)
+
+  let nMesh=0, nLines=0, nRealFastener=0, nSkippedIgnored=0, nSkippedDegenerate=0, nSkippedError=0;
+
+  (data.Elements || []).forEach(el => {
+    const name = (el.Name || '').trim();
+    if (IGNORE_NAMES.has(name.toLowerCase())) { nSkippedIgnored++; return; }
+
+    const corners = el.Corners;
+    if (!corners || el.CornersError) { nSkippedError++; return; }
+
+    const size = el.Size;
+    const isDimension = (el.Value !== null && el.Value !== undefined);
+    const isDegenerate = !isDimension && (!size || Math.min(...size) < 0.5);
+    if (isDegenerate) { nSkippedDegenerate++; return; }
+
+    const rgb = decodeColor(el.Color);
+    const isFastener = (rgb === null);
+    const pts = corners.map(p => new THREE.Vector3(p[0]*MM_TO_M, p[1]*MM_TO_M, p[2]*MM_TO_M));
+
+    if (isFastener){
+      let template = null;
+      if (daeCandidates){
+        const normName = normalizeName(name);
+        if (!(normName in fastenerTemplates)){
+          const jsonCenter = pts.reduce((a,p)=>a.clone().add(p), new THREE.Vector3()).multiplyScalar(1/8);
+          const match = matchFastener(jsonCenter, normName, daeCandidates);
+          fastenerTemplates[normName] = match
+            ? extractLocalTemplate(match.object, frameMatrixFromCorners(pts))
+            : null;
+        }
+        template = fastenerTemplates[normName];
+      }
+      if (template){
+        const inst = instantiateTemplate(template, frameMatrixFromCorners(pts));
+        inst.name = name;
+        group.add(inst);
+        nRealFastener++;
+        return;
+      }
+      // фолбэк — проволочный контур, цвет из LineColor если есть
+      const lineRgb = decodeColor(el.LineColor);
+      const lineColorHex = lineRgb ? new THREE.Color(lineRgb[0], lineRgb[1], lineRgb[2]).getHex() : 0x8a93a3;
+
+      if (el.Value !== null && el.Value !== undefined){
+        // размерная линия (Size3D) — полноценный глиф вместо простого бокса
+        const dimGroup = buildDimensionGroup(pts, el, lineColorHex);
+        dimGroup.name = name;
+        dimGroup.traverse(o => o.layers.set(NON_REFLECTED_LAYER)); // размеры — не в отражении
+        group.add(dimGroup);
+        nLines++;
+        return;
+      }
+
+      const positions = [];
+      BOX_EDGES.forEach(([a,b]) => {
+        positions.push(pts[a].x, pts[a].y, pts[a].z, pts[b].x, pts[b].y, pts[b].z);
+      });
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      const mat = new THREE.LineBasicMaterial({color:lineColorHex, clippingPlanes:[cutPlane, cutawayPlane]});
+      const lines = new THREE.LineSegments(geo, mat);
+      lines.layers.set(NON_REFLECTED_LAYER); // параметрическая фурнитура без 3D — не в отражении
+      lines.name = name;
+      group.add(lines);
+      nLines++;
+    } else {
+      // реальный контур пласти (не прямоугольник) — только прямые сегменты
+      // пока поддерживаются (AllLines), дуги — откат на обычный бокс
+      const useContour = el.Contour && el.Contour.AllLines && el.Contour.Segments && el.Contour.Segments.length >= 3;
+      const mesh = useContour
+        ? buildContourPanelMesh(pts, rgb, el, daeMaterials, textureMap, textureLoader)
+        : buildPanelMesh(pts, rgb, el, daeMaterials, textureMap, textureLoader);
+      mesh.name = name;
+      group.add(mesh);
+      nMesh++;
+
+      // настоящее зеркало — поверх обычной геометрии добавляем Reflector
+      // на лицевые грани (torец остаётся обычным, только сама плоскость
+      // зеркалит по-честному, без искажения масштаба). Учитывает и
+      // облицовку (Plastics) — если она зеркальная, а не базовый материал.
+      // Пока НЕ поддержано для панелей с реальным контуром (buildMirrorFaces
+      // построен на прямоугольной BOX_FACES-структуре) — осознанное
+      // упрощение, не путать со всеми остальными фичами, которые уже
+      // работают одинаково для обоих путей.
+      const guess = getEffectiveMaterialConfig(el);
+      if (!useContour && guess && guess.isMirrorPanel){
+        const mirrorFaces = buildMirrorFaces(pts, el);
+        mirrorFaces.name = name + ' (зеркало)';
+        group.add(mirrorFaces);
+      }
+    }
+  });
+
+  scene.add(group);
+  currentModelGroup = group;
+
+  const box = new THREE.Box3().setFromObject(group);
+  const sizeV = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const maxDim = Math.max(sizeV.x, sizeV.y, sizeV.z) || 1;
+  fullSceneView = { center: center.clone(), maxDim }; // для кнопки "Сбросить вид"
+  rebuildCutCaps(); // пересчитать геометрию крышек среза под новую сцену
+  rebuildCutawayCaps(); // то же для живого "Разреза"
+  controls.target.copy(center);
+  camera.position.set(center.x+maxDim*1.1, center.y+maxDim*0.75, center.z+maxDim*1.3);
+  camera.near = maxDim/100; camera.far = maxDim*50;
+  camera.updateProjectionMatrix();
+  controls.update();
+  grid.position.y = box.min.y;
+  grid.scale.setScalar(Math.max(maxDim/2, 0.5));
+
+  // ---- окружение для зеркала/хрома — снимок сцены изнутри кубической
+  // камерой, поставленной в её центр. Разово (сцена статична после сборки,
+  // повторный захват не нужен, пока не построена новая сцена) ----
+  if (currentEnvTarget) currentEnvTarget.dispose();
+  const cubeRenderTarget = new THREE.WebGLCubeRenderTarget(256);
+  const cubeCamera = new THREE.CubeCamera(maxDim/100, maxDim*10, cubeRenderTarget);
+  cubeCamera.position.copy(center);
+  scene.add(cubeCamera);
+  cubeCamera.update(renderer, scene);
+  scene.remove(cubeCamera);
+  currentEnvTarget = cubeRenderTarget;
+  group.traverse(obj => {
+    if (obj.isMesh && obj.material && obj.material.metalness > 0){
+      obj.material.envMap = cubeRenderTarget.texture;
+      obj.material.needsUpdate = true;
+    }
+  });
+
+  document.getElementById('modelName').textContent = label;
+  document.getElementById('stats').innerHTML =
+    `панелей: <span>${nMesh}</span><br>`+
+    `фурнитура (3D из .dae): <span>${nRealFastener}</span><br>`+
+    `фурнитура (линии): <span>${nLines}</span><br>`+
+    `пропущено: <span>${nSkippedIgnored+nSkippedDegenerate}</span>`;
+  document.getElementById('hud').style.display = '';
+  document.getElementById('toolbar').style.display = 'flex';
+  document.getElementById('stats').style.display = 'block';
+  document.getElementById('hint').style.display = '';
+  document.getElementById('err').textContent = '';
+}
+
+// ============================================================
+// Приём файлов: json / dae / текстуры — по расширению
+// ============================================================
+let pending = { json:null, jsonName:null, dae:null, daeName:null, textures:{} };
+
+function extOf(filename){
+  const m = /\.([a-z0-9]+)$/i.exec(filename);
+  return m ? m[1].toLowerCase() : '';
+}
+const IMAGE_EXT = new Set(['jpg','jpeg','png','bmp','tga','tif','tiff']);
+
+async function addFiles(files){
+  for (const f of files){
+    const ext = extOf(f.name);
+    if (ext === 'json'){
+      pending.json = await readSmart(f);
+      pending.jsonName = f.name;
+    } else if (ext === 'dae'){
+      pending.dae = await readSmart(f);
+      pending.daeName = f.name;
+    } else if (IMAGE_EXT.has(ext)){
+      pending.textures[f.name.toLowerCase()] = URL.createObjectURL(f);
+    }
+  }
+  renderPending();
+}
+
+function renderPending(){
+  const list = document.getElementById('pendingList');
+  const texCount = Object.keys(pending.textures).length;
+  const lines = [];
+  lines.push((pending.json ? '✓ ' : '— ') + '.json ' + (pending.jsonName || ''));
+  lines.push((pending.dae ? '✓ ' : '— ') + '.dae ' + (pending.daeName || '(опционально)'));
+  lines.push((texCount ? '✓ ' : '— ') + 'текстур: ' + texCount);
+  list.innerHTML = lines.map(l=>'<div>'+l+'</div>').join('');
+  const buildBtn = document.getElementById('buildBtn');
+  if (pending.json){
+    buildBtn.style.display = 'inline-block';
+    buildBtn.classList.add('ready');
+  }
+}
+
+async function runBuild(){
+  try {
+    const data = JSON.parse(pending.json);
+    let daeRoot = null;
+    let daeMaterials = null;
+    if (pending.dae){
+      daeMaterials = parseDaeMaterials(pending.dae, pending.textures);
+
+      const manager = new THREE.LoadingManager();
+      manager.setURLModifier((url) => {
+        const base = url.split(/[\\\/]/).pop().toLowerCase();
+        return pending.textures[base] || url;
+      });
+      const loader = new THREE.ColladaLoader(manager);
+      const result = loader.parse(pending.dae, '');
+      daeRoot = result.scene;
+      daeRoot.scale.multiplyScalar(0.001); // тот же трюк, что и с JSON: числа фактически в мм
+    }
+    document.getElementById('drop').classList.add('hidden');
+    buildScene(data, pending.jsonName || 'модель', daeRoot, daeMaterials, pending.textures);
+  } catch(e){
+    document.getElementById('err').textContent = 'Ошибка сборки: ' + e.message;
+    console.error(e);
+  }
+}
+
+const dropBox = document.getElementById('dropBox');
+const fileInput = document.getElementById('fileInput');
+document.getElementById('fileBtn').onclick = () => fileInput.click();
+fileInput.onchange = e => { if (e.target.files.length) addFiles(e.target.files); };
+
+const fileInputFallback = document.getElementById('fileInputFallback');
+document.getElementById('fileBtnFallback').onclick = () => fileInputFallback.click();
+fileInputFallback.onchange = e => { if (e.target.files.length) addFiles(e.target.files); };
+
+async function traverseEntry(entry, files){
+  if (entry.isFile){
+    const file = await new Promise((res,rej)=>entry.file(res,rej));
+    files.push(file);
+  } else if (entry.isDirectory){
+    const reader = entry.createReader();
+    // readEntries может вернуть не всё за один вызов — вычитываем до пустого списка
+    let batch;
+    do {
+      batch = await new Promise((res,rej)=>reader.readEntries(res,rej));
+      for (const e of batch) await traverseEntry(e, files);
+    } while (batch.length > 0);
+  }
+}
+
+['dragenter','dragover'].forEach(ev => document.body.addEventListener(ev, e=>{ e.preventDefault(); dropBox.classList.add('drag'); }));
+['dragleave'].forEach(ev => document.body.addEventListener(ev, e=>{ e.preventDefault(); dropBox.classList.remove('drag'); }));
+document.body.addEventListener('drop', async e=>{
+  e.preventDefault();
+  dropBox.classList.remove('drag');
+  const items = e.dataTransfer.items;
+  if (items && items.length && items[0].webkitGetAsEntry){
+    const files = [];
+    for (const item of items){
+      const entry = item.webkitGetAsEntry();
+      if (entry) await traverseEntry(entry, files);
+    }
+    if (files.length) addFiles(files);
+  } else if (e.dataTransfer.files.length){
+    addFiles(e.dataTransfer.files); // фолбэк — плоский список файлов, без подпапок
+  }
+});
+document.getElementById('buildBtn').onclick = runBuild;
+document.getElementById('lightBtn').onclick = () => {
+  hemi.visible = !hemi.visible;
+  document.getElementById('lightBtn').textContent = 'Глобальный свет: ' + (hemi.visible ? 'вкл' : 'выкл');
+};
+
+document.getElementById('outlineBtn').onclick = () => {
+  const anyEdges = [];
+  scene.traverse(obj => { if (obj.userData && obj.userData.isFlatEdges) anyEdges.push(obj); });
+  const newState = anyEdges.length ? !anyEdges[0].visible : true;
+  anyEdges.forEach(e => e.visible = newState);
+  document.getElementById('outlineBtn').textContent = 'Контур: ' + (newState ? 'вкл' : 'выкл');
+};
+
+document.getElementById('pointsBtn').onclick = () => {
+  const anyLabels = [];
+  scene.traverse(obj => { if (obj.userData && obj.userData.isPointLabels) anyLabels.push(obj); });
+  const newState = anyLabels.length ? !anyLabels[0].visible : true;
+  anyLabels.forEach(g => g.visible = newState);
+  document.getElementById('pointsBtn').textContent = 'Точки: ' + (newState ? 'вкл' : 'выкл');
+};
+
+// ---------- "Разрез" — живой, следует за камерой (см. updateCutawayFollow) ----------
+// Раньше был Sims-подобный (прятал лицевые грани по нормали к камере) —
+// не годился для тонких панелей (полка/дно: прячется только своя ближняя
+// грань, а параллельная грань той же панели в паре мм ниже остаётся и
+// перекрывает вид, см. docs/materials.md). Переделано 2026-08-14 на ту же
+// честную плоскость отсечения, что и "Разрез плоскостью", просто
+// авто-следящую за controls.target/камерой вместо ручной постановки.
+document.getElementById('cutawayBtn').onclick = () => {
+  cutawayOn = !cutawayOn;
+  cutawayCapGroup.visible = cutawayOn;
+  document.getElementById('cutawayBtn').textContent = 'Разрез: ' + (cutawayOn ? 'вкл' : 'выкл');
+  syncGlobalClipping();
+  if (!cutawayOn){ cutawayPlane.constant = PARK_CONSTANT; rebuildCutawayCaps(); }
+  else { updateCutawayFollow(); } // сразу поставить плоскость по текущей камере, не ждать следующего вращения
+};
+
+// ---------- "Разрез плоскостью" — ручная, как было изначально ----------
+document.getElementById('cutPlaceBtn').onclick = () => {
+  placingCutPlane = true;
+  document.getElementById('cutPlaceBtn').textContent = 'Кликни по модели…';
+};
+
+document.getElementById('cutToggleBtn').onclick = () => {
+  cutPlaneOn = !cutPlaneOn;
+  document.getElementById('cutToggleBtn').textContent = 'Разрез плоскостью: ' + (cutPlaneOn ? 'вкл' : 'выкл');
+  syncCutPlane();
+};
+
+document.getElementById('cutFlipBtn').onclick = () => {
+  cutPlaneReal.negate(); // встроенный метод THREE.Plane — переворачивает и нормаль, и сторону
+  syncCutPlane();
+};
+document.getElementById('cutBackBtn').onclick = () => {
+  const step = fullSceneView ? fullSceneView.maxDim/50 : 0.02; // шаг ~2% от размера сцены
+  cutPlaneReal.constant += step; // сдвигает плоскость НАЗАД по её нормали
+  syncCutPlane();
+};
+document.getElementById('cutFwdBtn').onclick = () => {
+  const step = fullSceneView ? fullSceneView.maxDim/50 : 0.02;
+  cutPlaneReal.constant -= step; // сдвигает плоскость ВПЕРЁД по её нормали
+  syncCutPlane();
+};
+
+document.getElementById('cutResetBtn').onclick = () => {
+  cutPlaneReal.set(new THREE.Vector3(0,0,1), 0);
+  cutCenterRaw.set(0,0,0);
+  placingCutPlane = false;
+  cutPlaneOn = false;
+  document.getElementById('cutPlaceBtn').textContent = 'Поставить плоскость среза';
+  document.getElementById('cutToggleBtn').textContent = 'Разрез плоскостью: выкл';
+  syncCutPlane(); // очистит геометрию крышек (плоскость в дефолте ничего не пересекает) и обновит визуал
+};
+
+document.getElementById('shadeBtn').onclick = () => {
+  // "тени" тут условно — на самом деле это не отбрасываемые тени
+  // (shadow mapping не включён), а обычное направленное затенение по
+  // нормали грани (key/fill light) — выключаем его, оставляя только
+  // ровный рассеянный свет, чтобы модель стала плоско закрашенной
+  const shadingOn = (key.visible === false); // если сейчас выкл — включаем обратно
+  key.visible = shadingOn;
+  fill.visible = shadingOn;
+  ambient.intensity = shadingOn ? 0.6 : 1.1; // компенсация, чтобы не стало чёрным
+  document.getElementById('shadeBtn').textContent = 'Тени: ' + (shadingOn ? 'вкл' : 'выкл');
+};
+
+document.getElementById('resetViewBtn').onclick = () => {
+  if (!fullSceneView) return;
+  const {center, maxDim} = fullSceneView;
+  controls.target.copy(center);
+  camera.position.set(center.x+maxDim*1.1, center.y+maxDim*0.75, center.z+maxDim*1.3);
+  camera.updateProjectionMatrix();
+  controls.update();
+};
+
+document.getElementById('debugCutBtn').onclick = () => {
+  console.log('=== DEBUG СРЕЗ ===');
+  console.log('renderer.localClippingEnabled:', renderer.localClippingEnabled);
+  console.log('cutPlane.normal:', cutPlane.normal.x, cutPlane.normal.y, cutPlane.normal.z, 'constant:', cutPlane.constant);
+  console.log('cutCapGroup.visible:', cutCapGroup.visible, 'children:', cutCapGroup.children.length);
+  if (!currentModelGroup) { console.log('нет модели'); return; }
+  currentModelGroup.traverse(obj => {
+    if (!obj.isMesh || !Array.isArray(obj.material)) return;
+    console.log('--- меш:', obj.name, '---');
+    obj.material.forEach((m,i) => {
+      console.log(`  material[${i}]:`, m.type, 'visible:', m.visible,
+        'clippingPlanes===cutPlane?', Array.isArray(m.clippingPlanes) && m.clippingPlanes[0]===cutPlane,
+        'clippingPlanes.length:', m.clippingPlanes ? m.clippingPlanes.length : 'нет поля',
+        'side:', m.side, 'needsUpdate:', m.needsUpdate);
+    });
+    console.log('  geometry.groups:', JSON.stringify(obj.geometry.groups));
+    console.log('  geometry index.count:', obj.geometry.index ? obj.geometry.index.count : 'нет индекса');
+    console.log('  frustumCulled:', obj.frustumCulled, 'boundingSphere:', obj.geometry.boundingSphere);
+  });
+};
+
+document.getElementById('reloadBtn').onclick = () => {
+  pending = { json:null, jsonName:null, dae:null, daeName:null, textures:{} };
+  document.getElementById('buildBtn').style.display = 'none';
+  document.getElementById('buildBtn').classList.remove('ready');
+  document.getElementById('pendingList').innerHTML = '';
+  document.getElementById('drop').classList.remove('hidden');
+};
+</script>
+</body>
+</html>

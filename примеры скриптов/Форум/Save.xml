@@ -1,0 +1,22 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<Options>
+  <Items>
+    <Item Name="Панель">
+      <Value>
+        <Name>ЛДСП-16 Коимбра светлая</Name>
+        <Thickness>16</Thickness>
+        <Width>-1</Width>
+      </Value>
+    </Item>
+    <Item Name="Пластик">
+      <Value>
+        <Name>ЛДСП-16 Коимбра светлая</Name>
+        <Thickness>16</Thickness>
+        <Width>-1</Width>
+      </Value>
+    </Item>
+    <Item>
+      <ReadOnly>Y</ReadOnly>
+    </Item>
+  </Items>
+</Options>

@@ -1,0 +1,43 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<Options>
+  <Items>
+    <Item Name="Цвет чёрный">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Тип материала">
+          <Value>ЛДСП</Value>
+          <ItemIndex>2</ItemIndex>
+        </Item>
+        <Item Name="Цвет материала">
+          <Value>65535</Value>
+        </Item>
+        <Item Name="Текстура назначена">
+          <Enabled>N</Enabled>
+        </Item>
+      </Items>
+    </Item>
+    <Item Name="ЛДСП дерево">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Тип материала">
+          <Value>ЛДСП</Value>
+          <ItemIndex>2</ItemIndex>
+        </Item>
+        <Item Name="Цвет материала">
+          <Enabled>N</Enabled>
+          <Value>39168</Value>
+        </Item>
+        <Item Name="Текстура назначена">
+          <Enabled>N</Enabled>
+          <Value>Y</Value>
+        </Item>
+      </Items>
+    </Item>
+    <Item>
+      <ReadOnly>Y</ReadOnly>
+    </Item>
+    <Item>
+      <ReadOnly>Y</ReadOnly>
+    </Item>
+  </Items>
+</Options>

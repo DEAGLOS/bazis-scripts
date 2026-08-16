@@ -1,0 +1,126 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<Options>
+  <Items>
+    <Item Name="Схема изделия">
+      <ReadOnly>Y</ReadOnly>
+    </Item>
+    <Item Name="Ширина">
+      <Value>1400</Value>
+    </Item>
+    <Item Name="Глубина">
+      <Value>1000</Value>
+    </Item>
+    <Item Name="Высота">
+      <Value>1300</Value>
+    </Item>
+    <Item Name="Размер до дна">
+      <Value>100</Value>
+    </Item>
+    <Item Name="Корпус">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Материал корпуса">
+          <Value>
+            <Name>фасад с пленкой пвх</Name>
+            <Thickness>16</Thickness>
+            <Width>-1</Width>
+          </Value>
+        </Item>
+        <Item Name="Видимая кромка">
+          <Value>
+            <Name>PVC 0,45*19 ясень шимо темныйВ342</Name>
+            <Thickness>.5</Thickness>
+            <Width>19</Width>
+            <Tape>Y</Tape>
+            <Sign>ясень ш.т. 0,54*19</Sign>
+            <Clip>2</Clip>
+          </Value>
+        </Item>
+        <Item Name="Невидимая кромка">
+          <Value>
+            <Name>PVC 0,45*19 ясень шимо темныйВ342</Name>
+            <Thickness>.5</Thickness>
+            <Width>19</Width>
+            <Tape>Y</Tape>
+            <Sign>ясень ш.т. 0,54*19</Sign>
+            <Clip>2</Clip>
+          </Value>
+        </Item>
+      </Items>
+    </Item>
+    <Item Name="Полки">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Количество полок">
+          <Value>2</Value>
+        </Item>
+        <Item Name="Отступ от Лев/Пр боковины">
+          <Value>2</Value>
+        </Item>
+        <Item Name="Отступ от переда">
+          <Value>20</Value>
+        </Item>
+        <Item Name="Отступ от зада"/>
+        <Item Name="Количество полкодерж ">
+          <Value>6</Value>
+        </Item>
+        <Item Name="Мин расст от низа/верха">
+          <Value>208</Value>
+        </Item>
+      </Items>
+    </Item>
+    <Item Name="Задняя стенка">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Материал">
+          <Value>
+            <Name>ДВП ламинированная белая</Name>
+            <Thickness>3</Thickness>
+            <Width>-1</Width>
+          </Value>
+        </Item>
+      </Items>
+    </Item>
+    <Item Name="Дверь">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Количество дверей">
+          <Value>2</Value>
+        </Item>
+        <Item Name="Материал">
+          <Value>
+            <Name>фасад с пленкой пвх</Name>
+            <Thickness>16</Thickness>
+            <Width>-1</Width>
+          </Value>
+        </Item>
+        <Item Name="Кромка">
+          <Value>
+            <Name>PVC 0,45*19 ясень шимо темныйВ342</Name>
+            <Thickness>.5</Thickness>
+            <Width>19</Width>
+            <Tape>Y</Tape>
+            <Sign>ясень ш.т. 0,54*19</Sign>
+            <Clip>2</Clip>
+          </Value>
+        </Item>
+        <Item Name="Петля">
+          <Value/>
+        </Item>
+        <Item Name="Профиль фрезы"/>
+        <Item Name="Тип филенки">
+          <Value>Тип1</Value>
+        </Item>
+        <Item Name="Отступ филенки от края">
+          <Value>80</Value>
+        </Item>
+        <Item Name="Радиус сопряжений">
+          <Value>80</Value>
+        </Item>
+      </Items>
+    </Item>
+    <Item>
+      <ReadOnly>Y</ReadOnly>
+    </Item>
+  </Items>
+</Options>

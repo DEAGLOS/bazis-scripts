@@ -1,0 +1,108 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<Options>
+  <Items>
+    <Item Name="Схема изделия">
+      <ReadOnly>Y</ReadOnly>
+    </Item>
+    <Item Name="Ширина">
+      <Value>500</Value>
+    </Item>
+    <Item Name="Глубина">
+      <Value>400</Value>
+    </Item>
+    <Item Name="Высота">
+      <Value>700</Value>
+    </Item>
+    <Item Name="Размер до дна">
+      <Value>50</Value>
+    </Item>
+    <Item Name="Размер фаски">
+      <Value>50</Value>
+    </Item>
+    <Item Name="Корпус">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Материал корпуса">
+          <Value>
+            <Name>ЛДСП 22мм Коимбра темная</Name>
+            <Thickness>44</Thickness>
+            <Width>-1</Width>
+          </Value>
+        </Item>
+        <Item Name="Видимая кромка">
+          <Value>
+            <Name>Кромка ПВХ 0,4/16 коимбра темная</Name>
+            <Thickness>.5</Thickness>
+            <Width>-1</Width>
+            <Tape>Y</Tape>
+            <Sign>П 0,4 коим.темн</Sign>
+            <Overhung>20</Overhung>
+            <Clip>1</Clip>
+          </Value>
+        </Item>
+        <Item Name="Невидимая кромка">
+          <Value>
+            <Name>Кромка ПВХ 0,4/16 коимбра темная</Name>
+            <Thickness>.5</Thickness>
+            <Width>-1</Width>
+            <Tape>Y</Tape>
+            <Sign>П 0,4 коим.темн</Sign>
+            <Overhung>20</Overhung>
+            <Clip>1</Clip>
+          </Value>
+        </Item>
+      </Items>
+    </Item>
+    <Item Name="Задняя стенка">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Материал">
+          <Value>
+            <Name>ЛДСП 22мм Коимбра темная</Name>
+            <Thickness>44</Thickness>
+            <Width>-1</Width>
+          </Value>
+        </Item>
+      </Items>
+    </Item>
+    <Item Name="Дверь">
+      <ReadOnly>Y</ReadOnly>
+      <Items>
+        <Item Name="Материал">
+          <Value>
+            <Name>ЛДСП 22мм Коимбра темная</Name>
+            <Thickness>44</Thickness>
+            <Width>-1</Width>
+          </Value>
+        </Item>
+        <Item Name="Кромка">
+          <Value>
+            <Name>Кромка ПВХ 0,4/16 коимбра темная</Name>
+            <Thickness>.5</Thickness>
+            <Width>-1</Width>
+            <Tape>Y</Tape>
+            <Sign>П 0,4 коим.темн</Sign>
+            <Overhung>20</Overhung>
+            <Clip>1</Clip>
+          </Value>
+        </Item>
+        <Item Name="Петля">
+          <Value/>
+        </Item>
+        <Item Name="Профиль фрезы"/>
+        <Item Name="Тип филенки">
+          <Value>Тип1</Value>
+        </Item>
+        <Item Name="Отступ филенки от края">
+          <Value>80</Value>
+        </Item>
+        <Item Name="Радиус сопряжений">
+          <Value>80</Value>
+        </Item>
+      </Items>
+    </Item>
+    <Item>
+      <ReadOnly>Y</ReadOnly>
+    </Item>
+  </Items>
+</Options>
