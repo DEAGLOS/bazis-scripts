@@ -1,9 +1,0 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
-<Options>
-  <Items>
-    <Item Name="Размер текста">
-      <Value>30</Value>
-    </Item>
-    <Item Name="Цвет"/>
-  </Items>
-</Options>
