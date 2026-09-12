@@ -14228,6 +14228,16 @@ jsonB3dInput.onchange = e => { const files = Array.from(e.target.files); e.targe
 // требует user gesture, поэтому если разрешение не 'granted' (обычно
 // каждый новый запуск браузера) — молча подключить нельзя, показываем
 // кликабельную подсказку, клик по которой сам и есть нужный gesture.
+// ВАЖНО: должна стоять РАНЬШЕ tryRestoreMaterialsLibrary ниже — та сама
+// IIFE (выполняется немедленно при разборе страницы) на Android
+// синхронно вызывает функции, использующие эту константу. const
+// инициализируется только в момент, когда движок ДОХОДИТ до этой
+// строки (temporal dead zone) — если объявить её ниже по файлу (было
+// именно так, поймано живым тестом: "Cannot access
+// 'ANDROID_MATERIALS_DIR' before initialization"), к моменту вызова
+// она была бы ещё не инициализирована.
+const ANDROID_MATERIALS_DIR = 'Fotly'; // относительно Directory.Documents
+
 (async function tryRestoreMaterialsLibrary(){
   // Android/APK — тихо читаем Documents/Fotly сразу при старте, без
   // всякого IndexedDB-хендла (там его в принципе нет, путь фиксирован).
@@ -14430,7 +14440,6 @@ yadiskLinkInput.addEventListener('keydown', e => {
 // один HTML-файл без сборщика), Directory/Encoding — просто строки
 // ('DOCUMENTS'/'utf8'), а не импортированные enum.
 // ============================================================
-const ANDROID_MATERIALS_DIR = 'Fotly'; // относительно Directory.Documents
 
 function isAndroidApp(){
   return !!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem);
@@ -14439,22 +14448,62 @@ function isAndroidApp(){
 // Читает Documents/Fotly целиком (material_config.js + текстуры) и
 // прогоняет через ТУ ЖЕ handleMaterialsFolder(files), что и десктопная
 // showDirectoryPicker-ветка — чтобы не дублировать логику разбора.
+// Создаёт Documents/Fotly + кладёт туда читаемую подсказку, ЕСЛИ папки
+// ещё нет — по прямой просьбе пользователя (2026-09-13): папка должна
+// появиться СРАЗУ при первом запуске приложения, а не только после
+// первого нажатия "Сохранить материалы" (до этого — ждать было ЛЕНИВОЕ
+// создание через recursive:true у writeFile, но пользователю банально
+// некуда было положить СВОИ файлы руками, пока он не сохранит что-то
+// из самого приложения хотя бы раз).
+async function ensureAndroidMaterialsFolder(){
+  const Filesystem = window.Capacitor.Plugins.Filesystem;
+  try {
+    await Filesystem.readdir({ path: ANDROID_MATERIALS_DIR, directory: 'DOCUMENTS' });
+    return true; // уже существует
+  } catch(e){
+    // не существует — создаём саму папку и кладём подсказку внутрь,
+    // чтобы папка не была пустой/непонятной, если открыть её файловым
+    // менеджером
+    try {
+      await Filesystem.writeFile({
+        path: `${ANDROID_MATERIALS_DIR}/Прочти меня.txt`,
+        directory: 'DOCUMENTS',
+        data: 'Сюда можно положить material_config.js (настройки типов материалов)'
+          + ' и файлы текстур (jpg/png) — Fotly подхватит их сама при следующем'
+          + ' открытии или по кнопке "Указать папку материалов…".',
+        encoding: 'utf8',
+        recursive: true,
+      });
+      return true;
+    } catch(e2){
+      console.error('Documents/Fotly: не удалось создать папку', e2);
+      return false;
+    }
+  }
+}
+
 async function loadMaterialsFromAndroidDocuments(){
   const Filesystem = window.Capacitor.Plugins.Filesystem;
   const statusEl = document.getElementById('matLibStatus');
+  const created = await ensureAndroidMaterialsFolder();
+  if (!created){
+    if (statusEl) statusEl.textContent = `Не удалось создать Documents/${ANDROID_MATERIALS_DIR}`;
+    return;
+  }
   let listing;
   try {
     listing = await Filesystem.readdir({ path: ANDROID_MATERIALS_DIR, directory: 'DOCUMENTS' });
   } catch(e){
-    // Папки ещё нет — это НЕ ошибка (обычное состояние при первом
-    // запуске, до того как пользователь что-то туда положит).
-    if (statusEl) statusEl.textContent = `Documents/${ANDROID_MATERIALS_DIR} пока пустая или не создана`;
+    if (statusEl) statusEl.textContent = `Documents/${ANDROID_MATERIALS_DIR} — ошибка чтения: ` + e.message;
     return;
   }
   const files = [];
   for (const entry of listing.files || []){
     if (entry.type !== 'file') continue;
     const isConfig = entry.name.toLowerCase() === 'material_config.js';
+    // не material_config.js и не картинка (например, наша же подсказка
+    // "Прочти меня.txt") — нечего читать, не тратим лишний вызов
+    if (!isConfig && !IMAGE_EXT.has(extOf(entry.name))) continue;
     try {
       const res = await Filesystem.readFile({
         path: `${ANDROID_MATERIALS_DIR}/${entry.name}`,
