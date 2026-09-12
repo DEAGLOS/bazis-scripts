@@ -13024,7 +13024,23 @@ function refreshMaterialLivePreviewGui(group){
     // ДО фикса (в уже существующих material_config.js без поля type),
     // как и раньше — 'Не задано', взять неоткуда, ничего не поделать
     // без ручного повторного выбора один раз.
-    state.type = (savedOverride && savedOverride.typeName) || 'Не задано';
+    // БЫЛ БАГ (прямая жалоба пользователя, 2026-09-13, особенно заметно
+    // на Android, где "Сохранить материалы" вообще не работала до этой
+    // же сессии правок): тип брался ТОЛЬКО из сохранённого на диск
+    // MATERIAL_OVERRIDES — если пользователь назначил тип и, не нажав
+    // "Сохранить", переключился на другой материал и вернулся обратно,
+    // подпись "Тип материала" откатывалась на "Не задано", хотя сам
+    // материал (roughness/metalness/цвет) визуально остался настроенным
+    // правильно (те читаются из ЖИВОГО THREE-материала чуть выше, не из
+    // файла). Теперь сперва смотрим на m.userData.lastAssignedTypeName
+    // (см. applyTypePreset) — то, что реально применено ПРЯМО СЕЙЧАС в
+    // этой сессии, живёт на самом объекте материала и не боится
+    // переключений между материалами внутри одной сессии — и только если
+    // его нет (свежая загрузка страницы/файла) откатываемся на то, что
+    // сохранено на диске.
+    state.type = (first.userData && first.userData.lastAssignedTypeName)
+      || (savedOverride && savedOverride.typeName)
+      || 'Не задано';
   }
   loadStateFromMaterial();
 
@@ -13125,7 +13141,7 @@ function refreshMaterialLivePreviewGui(group){
     // отменил выбор, флаг снимаем (крестик вернётся, если цвет всё ещё белый).
     if (v === 'Не задано'){
       state.isMirrorPanel = false; // см. комментарий у сохранения ниже — "Сохранить материалы" опирается на это поле
-      for (const m of allInstances()) delete m.userData.typeAssigned;
+      for (const m of allInstances()){ delete m.userData.typeAssigned; delete m.userData.lastAssignedTypeName; }
       renderCard();
       return;
     }
@@ -13138,7 +13154,7 @@ function refreshMaterialLivePreviewGui(group){
       setColorHex('#' + hex.toString(16).padStart(6,'0'));
       state.roughness = 0.4; state.metalness = 0; state.opacity = 1; state.transparent = false;
       applyToAll('roughness', 0.4); applyToAll('metalness', 0); applyToAll('opacity', 1); applyToAll('transparent', false);
-      for (const m of allInstances()) m.userData.typeAssigned = true;
+      for (const m of allInstances()){ m.userData.typeAssigned = true; m.userData.lastAssignedTypeName = v; }
       renderCard();
       return;
     }
@@ -13148,7 +13164,7 @@ function refreshMaterialLivePreviewGui(group){
     setHomogeneous(cfg.homogeneous);
     state.roughness = cfg.roughness; state.metalness = cfg.metalness; state.opacity = cfg.opacity; state.transparent = !!cfg.transparent;
     applyToAll('roughness', cfg.roughness); applyToAll('metalness', cfg.metalness); applyToAll('opacity', cfg.opacity); applyToAll('transparent', !!cfg.transparent);
-    for (const m of allInstances()) m.userData.typeAssigned = true;
+    for (const m of allInstances()){ m.userData.typeAssigned = true; m.userData.lastAssignedTypeName = v; }
     // "Зеркало" (cfg.isMirrorPanel, см. material_config.js face.mirror) —
     // ПЕРЕДЕЛАНО 2026-09-10 (см. память bazis-mirror-material-broken):
     // была отдельная Reflector-геометрия, убрана целиком. Roughness/
@@ -13380,6 +13396,16 @@ function refreshMaterialLivePreviewGui(group){
   // старой кнопки/автовосстановления) — в следующий раз подключится сам.
   const matLibBtn = materialCardEl.querySelector('#mcMatLibBtn');
   if (matLibBtn) matLibBtn.onclick = async () => {
+    // Android/APK — нет диалога выбора папки вообще, фиксированный путь
+    // Documents/Fotly (см. isAndroidApp/loadMaterialsFromAndroidDocuments
+    // выше). Кнопка тут просто ПЕРЕЧИТЫВАЕТ эту папку заново — полезно,
+    // если пользователь только что докинул туда файлы.
+    if (isAndroidApp()){
+      matLibBtn.textContent = 'Читаю Documents/Fotly…';
+      await loadMaterialsFromAndroidDocuments();
+      matLibBtn.textContent = 'Указать папку материалов…';
+      return;
+    }
     if (!window.showDirectoryPicker){
       matLibBtn.textContent = '✗ нужен Chrome/Edge для этого';
       setTimeout(() => matLibBtn.textContent = 'Указать папку материалов…', 3000);
@@ -13737,6 +13763,15 @@ function serializeMaterialOverrides(overrides){
 async function saveMaterialOverrideToFile(materialName, overrideData){
   if (typeof MATERIAL_OVERRIDES === 'undefined') window.MATERIAL_OVERRIDES = {};
   MATERIAL_OVERRIDES[materialName] = overrideData; // применяется сразу, не дожидаясь следующей загрузки
+
+  // Android/APK — showSaveFilePicker в WebView не работает вообще
+  // (см. isAndroidApp/saveMaterialOverridesAndroid выше), пишем прямо в
+  // Documents/Fotly/material_config.js без всякого диалога.
+  if (isAndroidApp()){
+    await saveMaterialOverridesAndroid();
+    return;
+  }
+
   const fileHandle = await getMaterialsFileHandleForWrite();
   try {
     // Если пользователь на первом вызове showSaveFilePicker указал
@@ -14194,6 +14229,9 @@ jsonB3dInput.onchange = e => { const files = Array.from(e.target.files); e.targe
 // каждый новый запуск браузера) — молча подключить нельзя, показываем
 // кликабельную подсказку, клик по которой сам и есть нужный gesture.
 (async function tryRestoreMaterialsLibrary(){
+  // Android/APK — тихо читаем Documents/Fotly сразу при старте, без
+  // всякого IndexedDB-хендла (там его в принципе нет, путь фиксирован).
+  if (isAndroidApp()){ await loadMaterialsFromAndroidDocuments(); return; }
   if (!window.showDirectoryPicker) return; // нет API — нечего восстанавливать
   let handle;
   try { handle = await idbGetHandle(); } catch(e){ return; }
@@ -14379,6 +14417,101 @@ yadiskLinkInput.addEventListener('keydown', e => {
 // или вьювер открыт не с диска, где относительный путь не резолвится).
 // var MATERIAL_TYPES/MATERIAL_KEYWORDS в файле — eval через window.eval
 // (косвенный вызов) кладёт их в global scope, перекрывая версию из тега.
+// ============================================================
+// Android/APK (Capacitor) — фиксированная папка Documents/Fotly вместо
+// showDirectoryPicker/showSaveFilePicker (те формально есть в Android
+// WebView, но падают с "The user aborted a request" — известный баг
+// самого WebView, кнопки молча ничего не делали). По прямой просьбе
+// пользователя (2026-09-13): пользователь докидывает файлы в
+// Documents/Fotly сам (файловым менеджером) или через сохранение из
+// самого приложения — путь СТРОГО такой же, что и договаривались раньше
+// (см. память fotly-android-capacitor-project.md).
+// window.Capacitor.Plugins.X — голый мост, не ES-модуль (вся страница
+// один HTML-файл без сборщика), Directory/Encoding — просто строки
+// ('DOCUMENTS'/'utf8'), а не импортированные enum.
+// ============================================================
+const ANDROID_MATERIALS_DIR = 'Fotly'; // относительно Directory.Documents
+
+function isAndroidApp(){
+  return !!(window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Filesystem);
+}
+
+// Читает Documents/Fotly целиком (material_config.js + текстуры) и
+// прогоняет через ТУ ЖЕ handleMaterialsFolder(files), что и десктопная
+// showDirectoryPicker-ветка — чтобы не дублировать логику разбора.
+async function loadMaterialsFromAndroidDocuments(){
+  const Filesystem = window.Capacitor.Plugins.Filesystem;
+  const statusEl = document.getElementById('matLibStatus');
+  let listing;
+  try {
+    listing = await Filesystem.readdir({ path: ANDROID_MATERIALS_DIR, directory: 'DOCUMENTS' });
+  } catch(e){
+    // Папки ещё нет — это НЕ ошибка (обычное состояние при первом
+    // запуске, до того как пользователь что-то туда положит).
+    if (statusEl) statusEl.textContent = `Documents/${ANDROID_MATERIALS_DIR} пока пустая или не создана`;
+    return;
+  }
+  const files = [];
+  for (const entry of listing.files || []){
+    if (entry.type !== 'file') continue;
+    const isConfig = entry.name.toLowerCase() === 'material_config.js';
+    try {
+      const res = await Filesystem.readFile({
+        path: `${ANDROID_MATERIALS_DIR}/${entry.name}`,
+        directory: 'DOCUMENTS',
+        ...(isConfig ? { encoding: 'utf8' } : {}),
+      });
+      if (isConfig){
+        files.push(new File([res.data], entry.name, { type: 'text/javascript' }));
+      } else if (IMAGE_EXT.has(extOf(entry.name))){
+        // без encoding Filesystem отдаёт base64 — декодируем в бинарные байты
+        const bin = atob(res.data);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        files.push(new File([bytes], entry.name));
+      }
+    } catch(e){
+      console.error('Documents/Fotly: не прочитался файл', entry.name, e);
+    }
+  }
+  await handleMaterialsFolder(files);
+  if (statusEl) statusEl.textContent = `✓ Documents/${ANDROID_MATERIALS_DIR} — файлов: ${files.length}`;
+}
+
+// Пишет/дополняет Documents/Fotly/material_config.js — тот же формат и
+// та же логика поиска маркеров MATERIAL_OVERRIDES, что и в
+// saveMaterialOverrideToFile (десктопная ветка), просто источник/
+// приёмник данных другой (Filesystem вместо showSaveFilePicker).
+async function saveMaterialOverridesAndroid(){
+  const Filesystem = window.Capacitor.Plugins.Filesystem;
+  const path = `${ANDROID_MATERIALS_DIR}/material_config.js`;
+  let text = '';
+  try {
+    const res = await Filesystem.readFile({ path, directory: 'DOCUMENTS', encoding: 'utf8' });
+    if (typeof res.data === 'string') text = res.data;
+  } catch(e){
+    // файла ещё нет в Documents/Fotly — нормально, создадим с нуля ниже
+  }
+  const newBlock = serializeMaterialOverrides(MATERIAL_OVERRIDES);
+  const startIdx = text.indexOf(MATERIAL_OVERRIDES_START_MARK);
+  const endIdx = text.indexOf(MATERIAL_OVERRIDES_END_MARK);
+  let newText;
+  if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx){
+    newText = text.slice(0, startIdx) + newBlock + text.slice(endIdx + MATERIAL_OVERRIDES_END_MARK.length);
+  } else if (!text){
+    newText = '// material_config.js — создан автоматически приложением в Documents/'
+      + ANDROID_MATERIALS_DIR + '. Тут только точечные правки материалов (кнопка'
+      + ' "Сохранить" в редакторе) — пресетов типов материалов (MATERIAL_TYPES) тут'
+      + ' нет, для них нужен настоящий material_config.js в той же папке.\n\n'
+      + newBlock + '\n';
+  } else {
+    newText = text.replace(/\s*$/, '') + '\n\n' + newBlock + '\n';
+  }
+  // recursive:true — сама создаёт Documents/Fotly, если их ещё нет
+  // (см. WriteFileOptions.recursive у @capacitor/filesystem).
+  await Filesystem.writeFile({ path, directory: 'DOCUMENTS', data: newText, encoding: 'utf8', recursive: true });
+}
+
 async function handleMaterialsFolder(files){
   for (const f of Array.from(files)){
     if (f.name.toLowerCase() === 'material_config.js'){
