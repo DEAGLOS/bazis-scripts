@@ -19,6 +19,9 @@
     user-select:none; -webkit-user-select:none; -moz-user-select:none;} /* иначе перетаскивание мышью (вращение камеры) выделяет текст страницы */
   #canvas-wrap{position:absolute;inset:0; touch-action:none; cursor:none; -webkit-touch-callout:none;} /* блокирует зум/скролл браузера от тапов и pinch — жесты обрабатывает сам OrbitControls; cursor:none — свой курсор ниже; touch-callout:none — на всякий случай гасит лупу/меню iOS на долгом нажатии (см. долгое нажатие ниже) */
   canvas{display:block;}
+  .edgeSwipeZone{position:fixed; top:0; bottom:0; width:14px; z-index:10; touch-action:auto;} /* узкая полоса у самого края экрана БЕЗ touch-action:none — иначе свайп от края (системный "назад" на телефоне) блокируется на всей странице из-за #canvas-wrap и страницу нечем закрыть */
+  #edgeSwipeLeft{left:0;}
+  #edgeSwipeRight{right:0;}
   #customCursor{
     position:fixed; left:0; top:0; width:22px; height:22px; border-radius:50%;
     background:#9a9a9a; opacity:0.3; pointer-events:none; z-index:50;
@@ -223,6 +226,22 @@
   #aboutCard p:last-of-type{margin-bottom:16px;}
   #aboutCard #aboutOkBtn{width:100%; box-sizing:border-box; text-align:center;}
 
+  /* "Настройки" — тот же модальный паттерн, что у #aboutOverlay, только
+     карточка со строками "подпись + элемент управления" (settingsRow). */
+  #settingsOverlay{display:none; position:fixed; inset:0; z-index:6000;
+    background:rgba(0,0,0,0.5); align-items:center; justify-content:center;}
+  #settingsOverlay.shown{display:flex;}
+  #settingsCard{background:var(--panel); border:1px solid var(--line); border-radius:8px;
+    padding:20px 24px; min-width:260px; box-shadow:0 8px 30px rgba(0,0,0,0.4);}
+  #settingsCard h3{margin:0 0 14px; font-size:14px; color:var(--text);}
+  .settingsRow{display:flex; align-items:center; justify-content:space-between; gap:16px;
+    font-size:13px; color:var(--text); padding:6px 0;}
+  .settingsRow input[type="color"]{width:32px; height:24px; padding:0; border:none;
+    border-radius:4px; cursor:pointer; background:none;}
+  .settingsRow input[type="color"]:disabled{opacity:0.4; cursor:default;}
+  .settingsRow input[type="checkbox"]{width:16px; height:16px; cursor:pointer;}
+  #settingsCard #settingsOkBtn{width:100%; box-sizing:border-box; text-align:center; margin-top:10px;}
+
   /* "Материалы сохранены" — по прямой жалобе пользователя (2026-09-10,
      "при сохранении материалов нет кнопки ок. просто браузер файловой
      системы открывается и всё"): раньше единственной обратной связью
@@ -317,7 +336,14 @@
        остальным содержимым при скролле — на длинной раскрытой панели
        кнопка сворачивания просто пропадала из виду. Прилипшая к верху
        СВОЕГО скролл-контейнера шапка всегда доступна для тапа/клика. */
-    position:sticky; top:0; background:var(--panel); z-index:1;}
+    position:sticky; top:0; background:var(--panel); z-index:1;
+    /* touch-action:none — по жалобе "тачем плохо перетаскивать, как
+       будто срывается" (2026-09-19): без этого браузер на реальном
+       телефоне на середине жеста решает, что это скролл/pan страницы, и
+       шлёт pointercancel — наш JS-драг (makeElDraggable) обрывается на
+       полпути. Тот же приём, что уже стоит на #canvas-wrap для
+       OrbitControls. */
+    touch-action:none;}
   /* Сворачивание панелей по клику на шапку — по прямой просьбе
      пользователя (2026-09-09): открытые панели закрывают весь экран,
      особенно на маленьких/сенсорных. Работает и мышью, и пальцем; от
@@ -445,7 +471,9 @@
     cursor:move; font-size:11px; color:var(--muted); display:flex; justify-content:space-between; align-items:center;
     /* sticky — та же причина, что у .panelHead выше ("свернуть не
        выходит" на длинной раскрытой панели). */
-    position:sticky; top:0; background:var(--panel); z-index:1;}
+    position:sticky; top:0; background:var(--panel); z-index:1;
+    /* touch-action:none — см. комментарий у #camPanel/#cutPanel .panelHead выше. */
+    touch-action:none;}
   #materialCard .mcHead b{color:var(--text); font-weight:600;}
   /* Сворачивание — тот же приём, что у #camPanel/#cutPanel выше (см.
      комментарий там), клик на шапку сворачивает тело карточки. */
@@ -551,6 +579,8 @@
 <body>
 
 <div id="canvas-wrap"></div>
+<div id="edgeSwipeLeft" class="edgeSwipeZone"></div>
+<div id="edgeSwipeRight" class="edgeSwipeZone"></div>
 
 <div id="captureOverlay"></div>
 <div id="captureRectVisual"></div>
@@ -642,6 +672,7 @@
          display:none по умолчанию — updateUndoBtnVisibility() показывает
          её только в режиме "Сенсор" и только пока есть что отменять. -->
     <button class="btn" id="undoBtn" style="display:none">↺ Отмена</button>
+    <button class="btn" id="settingsBtn">⚙️ Настройки</button>
     <button class="btn" id="aboutBtn">О программе</button>
   </div>
 </div>
@@ -656,6 +687,47 @@
     <p>Связь — vetalyty@gmail.com</p>
     <p>Новости разработки — boosty.to/vetalyty</p>
     <button class="btn" id="aboutOkBtn">ОК</button>
+  </div>
+</div>
+
+<!-- "Настройки" — по прямой просьбе пользователя (2026-09-21): отдельное
+     окно рядом с "О программе", пока только цвета — фон сцены (переехал
+     сюда из #camPanel, тот же #bgColorInput, JS-обработчик не менялся —
+     ищет по id, а не по родителю) и цвет контура панелей (новый). Тот же
+     модальный паттерн, что у #aboutOverlay. -->
+<div id="settingsOverlay">
+  <div id="settingsCard">
+    <h3>Настройки</h3>
+    <div class="settingsRow">
+      <span>Цвет фона</span>
+      <input type="color" id="bgColorInput" value="#f4f6f8">
+    </div>
+    <!-- "Цвет окон" — по прямой просьбе пользователя (2026-09-21): все
+         UI-окна (Камеры/Сечение/Материал, верхняя шапка #fileNameBar/
+         #quickBar, кнопки, все модалки типа этой) красятся ОДНОЙ CSS-
+         переменной --panel (см. :root в начале файла) — поэтому одна
+         правка custom property сразу перекрашивает вообще всё разом,
+         без ручного обхода элементов (в отличие от контура ниже, для
+         которого такого общего рычага нет). -->
+    <div class="settingsRow">
+      <span>Цвет окон</span>
+      <input type="color" id="panelColorInput" value="#e3e8ee">
+    </div>
+    <div class="settingsRow">
+      <span>Цвет контура</span>
+      <input type="color" id="contourColorInput" value="#000000">
+    </div>
+    <!-- "Адаптивный" — по прямой просьбе пользователя: контур сам
+         подбирает чёрный/белый по яркости материала панели, а не один
+         фиксированный цвет на все панели сразу (тёмный материал + чёрный
+         контур сливаются в силуэт без единой видимой грани). Пока
+         включена адаптивность — сам color-picker контура заблокирован
+         (не имеет смысла, цвет всё равно вычисляется на лету). -->
+    <label class="settingsRow" style="cursor:pointer">
+      <span>Адаптивный цвет контура</span>
+      <input type="checkbox" id="contourAdaptiveCheck">
+    </label>
+    <button class="btn" id="settingsOkBtn">ОК</button>
   </div>
 </div>
 
@@ -764,11 +836,11 @@
   <div class="panelSub">Виды отображения</div>
   <button class="btn" id="lightBtn">Глобальный свет: выкл</button>
   <button class="btn" id="productLightBtn">Свет изделий: вкл</button>
-  <button class="btn" id="outlineBtn">Контур: выкл</button>
+  <button class="btn" id="outlineBtn">Контур: вкл</button>
   <button class="btn" id="shadeBtn">Тени: вкл</button>
   <button class="btn" id="gridBtn">Сетка: вкл</button>
   <button class="btn" id="axisMarkersBtn">Оси анимаций: вкл</button>
-  <span class="btn" style="cursor:default">Цвет фона <input type="color" id="bgColorInput" value="#f4f6f8" style="vertical-align:middle;width:28px;height:20px;padding:0;border:none;cursor:pointer"></span>
+  <button class="btn" id="localAxesBtn">Локальные оси панелей: выкл</button>
   <button class="btn" id="noTexBtn">Без текстур: выкл</button>
   <button class="btn" id="wireframeBtn">Сетчатый: выкл</button>
   <button class="btn" id="xrayBtn">Полупрозрачный: выкл</button>
@@ -23371,20 +23443,47 @@ const renderer = new THREE.WebGLRenderer({antialias:true, logarithmicDepthBuffer
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 wrap.appendChild(renderer.domElement);
-const controls = new THREE.OrbitControls(camera, renderer.domElement);
+// let, не const — см. recreateControls() ниже (виды "Сверху"/"Снизу"
+// меняют camera.up, и OrbitControls после этого приходится пересоздавать).
+let controls = new THREE.OrbitControls(camera, renderer.domElement);
 // Инерция/доводка камеры после отпускания — убрана по прямой просьбе
 // пользователя (2026-09-14), камера теперь останавливается сразу же.
-controls.enableDamping = false;
-// по просьбе пользователя — ЛКМ вращает, колесо по-прежнему зумит (это
-// отдельный механизм OrbitControls, не завязан на mouseButtons). ПКМ
-// свободна под будущий функционал (например, отдельные клики для
-// инструментов). СКМ (2026-08-28, по прямой просьбе пользователя) —
-// панорама (сдвиг вида), вместо необходимости держать Shift+ЛКМ (тот
-// способ панорамы — штатное поведение OrbitControls, работает и сейчас,
-// см. shiftKey в handleMouseDownRotate/handleTouchStartRotate выше, СКМ
-// просто даёт более удобный альтернативный способ добраться до того же).
-controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: undefined };
-controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }; // на телефоне: один палец крутит, два — зум/панорама (жест pinch не трогаем)
+// Настройки controls вынесены в функцию — нужны и сразу при создании,
+// и повторно при пересоздании в recreateControls().
+function applyControlsSettings(c){
+  c.enableDamping = false;
+  // по просьбе пользователя — ЛКМ вращает, колесо по-прежнему зумит (это
+  // отдельный механизм OrbitControls, не завязан на mouseButtons). ПКМ
+  // свободна под будущий функционал (например, отдельные клики для
+  // инструментов). СКМ (2026-08-28, по прямой просьбе пользователя) —
+  // панорама (сдвиг вида), вместо необходимости держать Shift+ЛКМ (тот
+  // способ панорамы — штатное поведение OrbitControls, работает и сейчас,
+  // см. shiftKey в handleMouseDownRotate/handleTouchStartRotate выше, СКМ
+  // просто даёт более удобный альтернативный способ добраться до того же).
+  c.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: undefined };
+  c.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN }; // на телефоне: один палец крутит, два — зум/панорама (жест pinch не трогаем)
+}
+applyControlsSettings(controls);
+// Пересоздаёт OrbitControls на том же camera с новым target — нужно
+// ТОЛЬКО когда меняется camera.up (виды "Сверху"/"Снизу", см.
+// setStandardView ниже). Причина: OrbitControls считает свою внутреннюю
+// систему координат (пара quat/quatInverse) РОВНО ОДИН РАЗ при создании,
+// беря camera.up в этот момент — дальнейшие изменения camera.up эта
+// система координат никогда не подхватывает (это так во всех версиях
+// OrbitControls, не баг конкретно нашей копии). Из-за этого после выбора
+// "Сверху"/"Снизу" вращение мышью/тачем ощущалось "заблокированным по
+// оси" — а "Сбросить вид" это не чинил, т.к. Reset не трогает camera.up.
+// Пересоздание — единственный надёжный способ, других хуков у
+// OrbitControls для этого нет.
+function recreateControls(target){
+  const oldEnabled = controls.enabled;
+  controls.dispose();
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  applyControlsSettings(controls);
+  controls.target.copy(target);
+  controls.enabled = oldEnabled;
+  controls.update();
+}
 // доп. слой (1) — сетка/размеры/фурнитура-без-3D видны только основной
 // камере, не "зазеркаленной" внутри Reflector (у новой камеры по
 // умолчанию включён только слой 0 — у неё этот слой останется выключен
@@ -24222,11 +24321,12 @@ document.getElementById('undoBtn').onclick = undoLastAction;
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   const aboutShown = document.getElementById('aboutOverlay').classList.contains('shown');
+  const settingsShown = document.getElementById('settingsOverlay').classList.contains('shown');
   const specShown = document.getElementById('specOverlay').classList.contains('shown');
   const saveConfirmShown = document.getElementById('saveConfirmOverlay').classList.contains('shown');
   const newsShown = document.getElementById('newsOverlay').classList.contains('shown');
   const camModalShown = !document.getElementById('camNameModal').classList.contains('hidden');
-  if (aboutShown || specShown || saveConfirmShown || newsShown || camModalShown) return;
+  if (aboutShown || settingsShown || specShown || saveConfirmShown || newsShown || camModalShown) return;
   undoLastAction();
 });
 
@@ -25365,9 +25465,9 @@ function addCutCap(mesh, geo, sourceMat, materialKey, materialHomogeneous){
   // тоже прямой ребёнок scene, просто отдельная от модели группа.
   const capOutline = new THREE.LineSegments(
     new THREE.BufferGeometry(),
-    new THREE.LineBasicMaterial({color:0x000000})
+    new THREE.LineBasicMaterial({color: contourColorForMesh(capMesh)})
   );
-  capOutline.visible = false;
+  capOutline.visible = true; // "Контур" теперь ВКЛЮЧЕН по умолчанию (прямая просьба пользователя 2026-09-17)
   capOutline.userData.isFlatEdges = true;
   cutCapGroup.add(capOutline);
   currentCutCapSources.push({ geo, capMesh, capOutline });
@@ -26667,8 +26767,13 @@ function buildPanelMesh(pts, rgb, el, daeMaterials, textureMap, textureLoader){
     mesh.layers.enable(BLOOM_LAYER);
     productLightMeshes.push(mesh);
   }
-  addCutCap(mesh, geo, edgeMat, el.MaterialName && el.MaterialName.split('\r')[0], (getEffectiveMaterialConfig(el)||{}).homogeneous); // "крышка" среза плоскостью — некромлёный материал (торец/срез), не пласть
-  addCutawayCap(mesh, geo, edgeMat); // то же самое, но для живого "Разреза"
+  // ВАЖНО: mesh.geometry, а НЕ geo — тот же баг, что чинили ниже для
+  // чёрного контура (2026-09-14): у "Гнутой" панели applyBentWarp выше
+  // уже подменил mesh.geometry на изогнутую версию, geo остаётся старой
+  // плоской. Крышка среза строилась по НЕЙ — отсюда жалоба пользователя
+  // (2026-09-19): "разрез отображает торец как будто панель прямая".
+  addCutCap(mesh, mesh.geometry, edgeMat, el.MaterialName && el.MaterialName.split('\r')[0], (getEffectiveMaterialConfig(el)||{}).homogeneous); // "крышка" среза плоскостью — некромлёный материал (торец/срез), не пласть
+  addCutawayCap(mesh, mesh.geometry, edgeMat); // то же самое, но для живого "Разреза"
 
   // тонкий чёрный контур по рёбрам — только для "плоского режима",
   // скрыт по умолчанию, переключается вместе со светом. Основан на
@@ -26681,11 +26786,25 @@ function buildPanelMesh(pts, rgb, el, daeMaterials, textureMap, textureLoader){
   // плоской — реальная жалоба пользователя (2026-09-14, скриншот с
   // Android): чёрный контур рисовался плоским прямоугольником поверх
   // уже правильно согнутой панели.
+  // EDGES_THRESHOLD_DEG: у "Гнутой" панели applyBentWarp дробит грань на
+  // ~40 сегментов дуги (subdivideForBend) — стык между соседними
+  // сегментами даёт угол максимум ~180°/40=4.5° (sweepAbs не бывает
+  // больше 180° — см. нормализацию в applyBentWarp). Обычный порог
+  // EdgesGeometry (1°, по умолчанию) рисует и эти мелкие стыки —
+  // получается частая "решётка" по всей изогнутой грани вместо чистого
+  // контура. Реальная жалоба пользователя (2026-09-15): "убери контур
+  // каждого полигона... на самом сгибе каждый полигон не надо
+  // вырисовывать". Поднимаем порог до 15° — настоящие углы панели
+  // (~90°) и открытые (граничные) рёбра всё равно рисуются ВСЕГДА,
+  // независимо от порога (у EdgesGeometry такие рёбра не с кем сравнивать
+  // по углу — это чужой код three.js, не наша логика), так что силуэт
+  // панели, включая саму кривую границу вдоль сгиба, остаётся на месте.
+  const EDGES_THRESHOLD_DEG = el.BentContour ? 15 : 1;
   const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(mesh.geometry),
-    new THREE.LineBasicMaterial({color:0x000000, clippingPlanes:[cutPlane, cutawayPlane]})
+    new THREE.EdgesGeometry(mesh.geometry, EDGES_THRESHOLD_DEG),
+    new THREE.LineBasicMaterial({color: contourColorForMesh(mesh), clippingPlanes:[cutPlane, cutawayPlane]})
   );
-  edges.visible = false;
+  edges.visible = true; // "Контур" теперь ВКЛЮЧЕН по умолчанию (прямая просьба пользователя 2026-09-17)
   edges.userData.isFlatEdges = true;
   mesh.add(edges);
 
@@ -26707,6 +26826,81 @@ function buildForcedOutline(geometry, color){
   );
   outline.userData.isForcedOutline = true; // отдельная метка — НЕ трогается тумблером isFlatEdges
   return outline;
+}
+
+// ============================================================
+// "Локальные оси панелей" — по прямой просьбе пользователя ("сделай
+// опцию — чтобы можно было включить локальные оси, может так я смогу
+// понимать как ты видишь", 2026-09-17, в разгар разбора формулы изгиба
+// "Гнутой" панели). Визуализирует ТОТ ЖЕ угловой базис (pts[0]=начало,
+// pts[1]-pts[0]=X, pts[2]-pts[0]=Y, pts[4]-pts[0]=Z), который использует
+// весь остальной код панели — metricFrameFromCorners/frameMatrixFromCorners
+// (см. applyBentWarp/buildContourPanelMesh) — то есть буквально ту систему
+// координат, в которой код "думает" при позиционировании/изгибе. Красный
+// (X), зелёный (Y), синий (Z) — стандартная three.js-конвенция цветов осей.
+// Опционально (выключено по умолчанию — тумблер localAxesBtn), в отличие
+// от "Контур" — это чисто отладочный инструмент, не часть обычного вида.
+// ============================================================
+// ФИКС (2026-09-17, поймано сразу пользователем — "жму галку но осей не
+// вижу", одновременно с жалобой на позиционирование другого файла): для
+// ГНУТОЙ панели `pts[0]` — это угол ЕЩЁ ПЛОСКОГО контура ДО applyBentWarp,
+// а сам меш после изгиба+якоря по WorldPos может физически оказаться в
+// метрах от этой точки (см. bazis-b3d-format.md — WorldPos-анкор двигает
+// ВЕСЬ меш). Первая попытка — брать угол bounding box'а ГОТОВОГО меша
+// (`mesh.geometry.boundingBox.min`) — пользователь поправил: "ось должна
+// стоять на начале точки траектории", не на произвольном углу бокса
+// (bbox-угол — не обязательно та же точка, что начало пути изгиба, для
+// сложной формы это разные вещи). Настоящий фикс — `applyBentWarp` сам
+// считает и кладёт в `mesh.userData.bentTrajectoryStart` РЕАЛЬНУЮ мировую
+// точку `along=alongMinM` (начало траектории), тем же путём, что и все
+// остальные вершины (bendXZ→якорь→frameMat→worldShiftAfterFrame) — для
+// !ANCHOR_AT_CORNER это ТА САМАЯ точка, что подтверждена реальными
+// координатами Базиса (см. bazis-b3d-format.md, файл "9e750bd9"). Для
+// обычных (негнутых) панелей такого поля нет — используем `pts[0]`,
+// как и было изначально.
+function buildLocalAxesHelper(pts, mesh){
+  if (!pts || pts.length < 5) return null;
+  const bentStart = mesh && mesh.userData && mesh.userData.bentTrajectoryStart;
+  const origin = bentStart ? bentStart.clone() : pts[0];
+  // ФИКС — для гнутой панели реальная ось толщины развёрнута на bendSign
+  // (см. комментарий у `mesh.userData.bentZSign` в applyBentWarp), для
+  // обычной панели такого поля нет — знак не трогаем (обычный +1).
+  const zSign = (mesh && mesh.userData && mesh.userData.bentZSign) || 1;
+  // ФИКС — для гнутой панели красная (X/"вдоль") и зелёная (Y/"ширина")
+  // стрелки должны отражать ФИЗИЧЕСКУЮ роль (какая ось реально гнётся),
+  // а не жёстко угол pts[1]/pts[2] — см. `bentAlongIsX` в applyBentWarp.
+  // Для обычной (негнутой) панели такого поля нет — оставляем как было.
+  const alongIsX = (mesh && mesh.userData && typeof mesh.userData.bentAlongIsX === 'boolean')
+    ? mesh.userData.bentAlongIsX : true;
+  const xDir = (alongIsX ? pts[1] : pts[2]).clone().sub(pts[0]);
+  const yDir = (alongIsX ? pts[2] : pts[1]).clone().sub(pts[0]);
+  const zDir = pts[4].clone().sub(pts[0]).multiplyScalar(zSign);
+  const avgLen = (xDir.length() + yDir.length() + zDir.length()) / 3;
+  if (!(avgLen > 1e-9)) return null;
+  const arrowLen = THREE.MathUtils.clamp(avgLen * 0.35, 0.02, 0.2);
+  const grp = new THREE.Group();
+  grp.userData.isLocalAxes = true;
+  grp.visible = false; // опция — включается тумблером, не показывается по умолчанию
+  // ФИКС (2026-09-17, та же жалоба "жму галку но осей не вижу") —
+  // ArrowHelper по умолчанию рисуется с обычным depth-test, поэтому
+  // стрелка из угла панели, направленная "внутрь" толстой непрозрачной
+  // детали, пряталась ЗА её же геометрией — снаружи не видно вообще
+  // ничего, хотя объект технически в кадре и visible=true. Уже рабочий
+  // похожий отладочный хелпер в этом файле ("Оси анимаций",
+  // addAnimAxisMarker выше) решает это ИМЕННО так — `depthTest:false` +
+  // высокий `renderOrder`, стрелки всегда поверх остальной сцены.
+  [[xDir, 0xff3b30], [yDir, 0x34c759], [zDir, 0x0a84ff]].forEach(([dir, color]) => {
+    const len = dir.length();
+    if (!(len > 1e-9)) return;
+    const arrow = new THREE.ArrowHelper(dir.clone().normalize(), origin, arrowLen, color, arrowLen*0.3, arrowLen*0.18);
+    arrow.line.material.depthTest = false;
+    arrow.cone.material.depthTest = false;
+    arrow.renderOrder = 999;
+    arrow.line.renderOrder = 999;
+    arrow.cone.renderOrder = 999;
+    grp.add(arrow);
+  });
+  return grp.children.length ? grp : null;
 }
 
 // ============================================================
@@ -27174,23 +27368,97 @@ function subdivideForBend(geo, along1, along2Unused, inv, bendAxisIsX, targetSeg
   return newGeo;
 }
 
+// ФИКС (2026-09-17, прямая наводка пользователя: "ты же уже научился
+// траекторию считывать у панелей... я открыл панель где по обоим концам
+// прямые — ты делаешь один прямой хвост и гнёшь") — раньше applyBentWarp
+// читал из `BentContour` РОВНО первые 54 байта, считая их ОДНИМ дуговым
+// сегментом (tag=18), и достраивал прямой участок эвристикой "всё, что
+// осталось от extentX за вычетом длины дуги, — один хвост ПЕРЕД дугой".
+// На реальной панели с прямыми участками С ОБЕИХ СТОРОН это ломалось.
+//
+// Разгадано численно (файл `ba55abef`, панель "Гнутая1", Size.X=307.0796мм)
+// — `BentContour` НЕ "54 байта = одна дуга", а буквально ТОТ ЖЕ общий
+// формат многосегментного контура, что и обычный `Contour`/`b3dParseContour`
+// (int32 N + N сегментов, tag=16 прямая/33 байта, tag=18 дуга/50 байт) —
+// просто раньше в ОБОИХ тестовых файлах N случайно был равен 1 (только
+// дуга), что и создало иллюзию "фиксированного формата в 54 байта".
+// Для `ba55abef` N=3: прямая(50мм) → дуга(R=100мм,90°,157.0796мм) →
+// прямая(100мм) — сумма 307.0796мм СОВПАДАЕТ с Size.X до 10-го знака.
+// Значит `BentContour` — это НАСТОЯЩАЯ траектория выдавливания панели
+// (ровно как предполагал пользователь ещё раньше: "базис создаёт панель
+// прямоугольную и потом гнёт её по траектории, как выдавливание, вместо
+// контура — только путь"), а не "превью-дуга в мелком масштабе" — это
+// была ошибочная гипотеза из самой первой расшифровки (единственный
+// тогдашний тестовый файл был устроен так, что её нечем было опровергнуть).
+//
+// НОВЫЙ алгоритм — вместо "одна дуга + один прямой хвост, отражённый
+// через хорду" (bendStart/bendEnd/reflectAcrossChord) — честно ХОДИМ по
+// траектории `BentContour` сегмент за сегментом (line/arc, в файловом
+// порядке = порядок вдоль оси изгиба, подтверждено суммой длин), копя
+// (px,pz,theta) — накопленную позицию/касательную в плоскости изгиба.
+// Дуга поворачивает theta на свой sweep (знак — какой стороной поворачивает
+// ЭТА дуга, из atan2 центра/концов — НЕ имеет отношения к BentDirection);
+// прямая — theta не меняется, просто едем по текущей касательной. Толщина
+// (z) сдвигает точку ВДОЛЬ ЛОКАЛЬНОЙ НОРМАЛИ (касательная, повёрнутая на
+// -90°, домноженная на bendSign) — для дугового сегмента это математически
+// ТО ЖЕ САМОЕ, что радиус R±z (обычная цилиндрическая развёртка слоя), а
+// для прямого сегмента — простой перпендикулярный сдвиг без растяжения.
+// Стык между сегментами по построению касательно-непрерывен — швов нет.
+//
+// Это ОДНОВРЕМЕННО убирает нужду в хорде-зеркале (MIRROR_ON/
+// reflectAcrossChord) — то, что раньше подпиралось "отражением", теперь
+// получается САМО из знака sweep КАЖДОЙ дуги в траектории (кольцо из
+// нескольких "Гнутых" — у каждой своя, отдельная, честная траектория,
+// никакого дополнительного зеркалирования не требуется). Выбор ЯКОРЯ
+// позиционирования (pts[0] для колец/сборок из чистых дуг vs WorldPos для
+// панелей с прямым участком) ПОКА ОСТАВЛЕН БЕЗ ИЗМЕНЕНИЙ (по прямой
+// просьбе пользователя "забываем пока про положение и прочее" — сначала
+// форма, позиционирование для панелей с прямыми участками с ОБЕИХ сторон
+// ещё предстоит проверить отдельно).
+function b3dParseBentTrajectory(bytes){
+  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const n = dv.getInt32(0, true);
+  const segs = [];
+  let p = 4;
+  for (let i = 0; i < n; i++){
+    if (p + 1 > bytes.byteLength) break;
+    const tag = dv.getUint8(p);
+    if (tag === 16){
+      if (p + 33 > bytes.byteLength) break;
+      const x1=dv.getFloat64(p+1,true), y1=dv.getFloat64(p+9,true), x2=dv.getFloat64(p+17,true), y2=dv.getFloat64(p+25,true);
+      segs.push({ type:'line', lenMM: Math.hypot(x2-x1, y2-y1) });
+      p += 33;
+    } else if (tag === 18){
+      if (p + 50 > bytes.byteLength) break;
+      const cx=dv.getFloat64(p+1,true), cy=dv.getFloat64(p+9,true);
+      const p1x=dv.getFloat64(p+17,true), p1y=dv.getFloat64(p+25,true);
+      const p2x=dv.getFloat64(p+33,true), p2y=dv.getFloat64(p+41,true);
+      const R_mm = Math.hypot(p1x-cx, p1y-cy);
+      let a1 = Math.atan2(p1y-cy, p1x-cx), a2 = Math.atan2(p2y-cy, p2x-cx);
+      let sweep = a2 - a1;
+      while (sweep > Math.PI) sweep -= 2*Math.PI;
+      while (sweep <= -Math.PI) sweep += 2*Math.PI;
+      if (R_mm > 0 && Math.abs(sweep) > 1e-6) segs.push({ type:'arc', R_mm, sweep });
+      p += 50;
+    } else {
+      break; // неизвестный тег в траектории — не должно случаться, отдаём то, что успели прочитать
+    }
+  }
+  return segs;
+}
+
 function applyBentWarp(mesh, el, pts){
   const bytes = el.BentContour;
-  if (!bytes || bytes.byteLength < 54) return;
-  const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const cx = dv.getFloat64(5, true), cy = dv.getFloat64(13, true);
-  const p1x = dv.getFloat64(21, true), p1y = dv.getFloat64(29, true);
-  const p2x = dv.getFloat64(37, true), p2y = dv.getFloat64(45, true);
-  const R_mm = Math.hypot(p1x-cx, p1y-cy);
-  if (!(R_mm > 0)) return;
-  let a1 = Math.atan2(p1y-cy, p1x-cx), a2 = Math.atan2(p2y-cy, p2x-cx);
-  let sweep = a2 - a1;
-  while (sweep > Math.PI) sweep -= 2*Math.PI;
-  while (sweep <= -Math.PI) sweep += 2*Math.PI;
-  const sweepAbs = Math.abs(sweep);
-  if (!(sweepAbs > 1e-6)) return;
-  const R = R_mm * MM_TO_M; // метры
-  const arcLenM = R * sweepAbs; // метры — длина дуги = радиус×угол
+  if (!bytes || bytes.byteLength < 5) return;
+  const rawSegs = b3dParseBentTrajectory(bytes);
+  if (!rawSegs.length) return;
+  // сегменты траектории — сразу в метрах (R и длины прямых), sweep уже в радианах
+  const segs = rawSegs.map(s => s.type === 'line'
+    ? { type:'line', len: s.lenMM * MM_TO_M }
+    : { type:'arc', R: s.R_mm * MM_TO_M, sweep: s.sweep, len: s.R_mm*MM_TO_M*Math.abs(s.sweep) });
+  const totalLenM = segs.reduce((a,s) => a+s.len, 0);
+  if (!(totalLenM > 1e-9)) return;
+  const arcLenTotalM = segs.filter(s=>s.type==='arc').reduce((a,s)=>a+s.len, 0) || totalLenM;
 
   const frameMat = metricFrameFromCorners(pts); // НАСТОЯЩИЕ метры, см. комментарий выше
   const inv = frameMat.clone().invert();
@@ -27204,34 +27472,275 @@ function applyBentWarp(mesh, el, pts){
     if (v.y<minY) minY=v.y; if (v.y>maxY) maxY=v.y;
   }
   const extentX = maxX-minX, extentY = maxY-minY;
-  const bendAxisIsX = Math.abs(extentX-arcLenM) <= Math.abs(extentY-arcLenM);
+  // ось гиба — та, чей extent совпадает (в пределах допуска) с полной
+  // длиной траектории totalLenM (прямые+дуги суммарно), см. фикс
+  // 2026-09-16 (без этого на панелях с прямыми участками ось выбиралась
+  // неверно — поперечный extent иногда случайно оказывался численно
+  // "ближе" к длине ОДНОЙ дуги, чем правильная продольная ось).
+  const AXIS_EPS = 1e-4; // метры, запас на погрешность вычислений
+  const xFits = extentX >= totalLenM - AXIS_EPS, yFits = extentY >= totalLenM - AXIS_EPS;
+  const bendAxisIsX = (xFits !== yFits) ? xFits : (Math.abs(extentX-totalLenM) <= Math.abs(extentY-totalLenM));
   const alongMinM = bendAxisIsX ? minX : minY;
+  // ФИКС (2026-09-18, по трём реальным файлам сразу — f6d69e2e с 12 сферами-
+  // маркерами на СТЫКЕ двух гнутых панелей "торцами", 9e750bd9 с известной
+  // точкой и b4d30114 с 8 сферами) — старое "-1:1" было проверено ТОЛЬКО
+  // на b4d30114 и оказалось регрессией для остальных двух (0.000мм там, но
+  // ~217-226мм здесь). "1:-1" сходится на всех трёх сразу.
   const bendSign = (el.BentDirection === 1) ? 1 : -1;
 
-  // ~40 сегментов на всю дугу — та же плотность, что и у обычных дуг
-  // Contour (B3D_ARC_SEGMENTS=16 на куда меньший типичный угол)
-  const targetSegLenM = arcLenM / 40;
+  // Якорь толщины (см. фикс 2026-09-15 — облицовка сдвигала ВСЮ сборку,
+  // а не только себя, когда была ближе к камере/наблюдателю по Z).
+  const zAnchor = (el.ExtraNear || 0) * MM_TO_M;
+
+  // ~40 сегментов на ВСЮ ДУГОВУЮ часть траектории (та же плотность, что
+  // и у обычных дуг Contour, B3D_ARC_SEGMENTS=16 на куда меньший типичный
+  // угол) — прямые участки не нуждаются в подразбиении вообще (у них нет
+  // кривизны), но subdivideForBend режет ПО EXTENT вдоль оси гиба целиком
+  // (у неё нет понятия "тут дуга, тут нет") — targetSegLenM даёт разумную
+  // плотность и для прямых частей тоже (чуть избыточно, не критично).
+  const targetSegLenM = arcLenTotalM / 40;
   mesh.geometry = subdivideForBend(mesh.geometry, null, null, inv, bendAxisIsX, targetSegLenM);
   const posAttr = mesh.geometry.attributes.position;
 
+  // ФИКС (2026-09-18) — разворот сегментов (введён 2026-09-17) был НЕ НУЖЕН:
+  // тот же результат для `9e750bd9` (0,0.1,0.2) на самом деле достигается и
+  // БЕЗ разворота, если поправить знак толщины (bendSign, см. выше) и своп
+  // осей embed (см. per-vertex ниже) — разворот "компенсировал" неверный
+  // знак в другом месте, что и маскировало регрессию на f6d69e2e (см. тот
+  // же фикс у bendSign). `BentContour` хранит сегменты В ФАЙЛОВОМ порядке,
+  // от alongMin к alongMax — без разворота и без смены знака sweep.
+  //
+  // ФИКС (2026-09-19) — предыдущий вывод был верен только для netSweep<0
+  // (f6d69e2e/9e750bd9/0a82b24a). На `0a82b24a` (та же пара arc+line, но
+  // впервые проверено ПО ВНУТРЕННИМ точкам кривой — середина дуги и стык
+  // дуги с прямой, 14 сфер-маркеров, а не только по торцам, которые
+  // совпадают тривиально при ЛЮБОЙ форме кривой) обнаружилось, что сама
+  // форма кривой внутри всё ещё неверна: реальный физический порядок —
+  // ДУГА примыкает к ближнему концу, ПРЯМАЯ — к дальнему (проверено чисто
+  // по евклидовым расстояниям между сферами, без всякой формулы), что
+  // формально совпадает с файловым порядком, но начальный угол касательной
+  // и знак нормали толщины всё равно требуют поправки. Разворот сегментов +
+  // смена знака sweep + другой стартовый theta(-90°) + смена знака (nx,nz)
+  // дают точное совпадение (≤0.0005мм) по всем 14 точкам `0a82b24a` и не
+  // ломают уже проверенные файлы — ТОЛЬКО если применять это условно, по
+  // знаку netSweep (та же величина, что и у dynThickSwapSign ниже, здесь
+  // продублирована раньше по коду, т.к. нужна до объявления orderedSegs).
+  // На netSweep>=0 (`b4d30114`, дуга +90°) старая ветка остаётся как есть —
+  // безусловное применение давало на ней регрессию до 594мм на 2 углах.
+  const __netSweepPreFix = segs.reduce((a,s) => a + (s.type==='arc' ? s.sweep : 0), 0);
+  const __bentCurveFixApplies = __netSweepPreFix < 0;
+  const orderedSegs = __bentCurveFixApplies
+    ? segs.slice().reverse().map(s => s.type==='arc' ? Object.assign({}, s, {sweep:-s.sweep}) : s)
+    : segs.slice();
+
+  // Контрольные точки траектории — (sStart, theta, px, pz) НАЧАЛА каждого
+  // сегмента, посчитано ОДИН раз (не на вершину). theta — накопленный
+  // угол касательной в плоскости изгиба (0 = "вдоль оси гиба", как раньше).
+  const cps = [];
+  { let s=0, theta=__bentCurveFixApplies?-Math.PI/2:0, px=0, pz=0;
+    for (const seg of orderedSegs){
+      cps.push({ sStart:s, theta, px, pz, seg });
+      if (seg.type === 'line'){
+        px += seg.len*Math.cos(theta);
+        pz += seg.len*Math.sin(theta);
+      } else {
+        const kappa = seg.sweep/seg.len; // = sign(sweep)/R, кривизна со знаком
+        const phi = theta + seg.sweep;
+        px += (Math.sin(phi)-Math.sin(theta))/kappa;
+        pz -= (Math.cos(phi)-Math.cos(theta))/kappa;
+        theta = phi;
+      }
+      s += seg.len;
+    }
+  }
+
+  // ФИКС (2026-09-18) — знак свопа толщины в embed (per-vertex ниже и rawFar)
+  // не может быть одной и той же константой для ВСЕХ файлов: f6d69e2e/
+  // 9e750bd9 (дуга со sweep=-90°) и b4d30114 (дуга со sweep=+90°) требуют
+  // ПРОТИВОПОЛОЖНЫХ знаков, проверено по реальным сферам-маркерам во всех
+  // трёх файлах сразу. Знак совпадает со знаком суммарного sweep дуговых
+  // участков траектории (arc-only кольца, ANCHOR_AT_CORNER, эту переменную
+  // не используют — там своя, независимая от bendXZ якорная точка).
+  const netSweep = segs.reduce((a,s) => a + (s.type==='arc' ? s.sweep : 0), 0);
+  const dynThickSwapSign = netSweep < 0 ? -1 : 1;
+
+  function bendXZ(along, z){
+    let s = along - alongMinM, overflow = 0;
+    if (s < 0){ overflow = s; s = 0; }
+    else if (s > totalLenM){ overflow = s - totalLenM; s = totalLenM; }
+    let cp = cps[0];
+    for (let k=0;k<cps.length;k++){ if (cps[k].sStart <= s + 1e-9) cp = cps[k]; else break; }
+    const u = s - cp.sStart;
+    let theta, basePx, basePz;
+    if (cp.seg.type === 'line'){
+      theta = cp.theta;
+      basePx = cp.px + u*Math.cos(theta);
+      basePz = cp.pz + u*Math.sin(theta);
+    } else {
+      const kappa = cp.seg.sweep/cp.seg.len;
+      const phi = cp.theta + kappa*u;
+      basePx = cp.px + (Math.sin(phi)-Math.sin(cp.theta))/kappa;
+      basePz = cp.pz - (Math.cos(phi)-Math.cos(cp.theta))/kappa;
+      theta = phi;
+    }
+    if (overflow !== 0){
+      // за пределами всей траектории (не должно случаться на согласованных
+      // файлах, totalLenM==extent — подстраховка на погрешность/край) —
+      // прямое продолжение по касательной последней/первой точки.
+      basePx += overflow*Math.cos(theta);
+      basePz += overflow*Math.sin(theta);
+    }
+    // нормаль = касательная, повёрнутая на -90°, со знаком bendSign —
+    // для дугового сегмента это РОВНО "радиус R±z" (та же цилиндрическая
+    // развёртка слоя, что и раньше), для прямого — перпендикулярный сдвиг
+    // без растяжения/сжатия. zAnchor — см. комментарий выше про облицовку.
+    // ФИКС (2026-09-19, см. __bentCurveFixApplies выше) — при развороте
+    // сегментов формула нормали должна указывать в противоположную
+    // сторону (проверено по реальным координатам толстых углов и точки
+    // стыка `0a82b24a`, не подбором): плюс на минус меняются оба знака
+    // разом, это не то же самое, что смена bendSign по отдельности.
+    const zEff = z - zAnchor;
+    const nx = (__bentCurveFixApplies?-1:1)*Math.sin(theta)*bendSign, nz = (__bentCurveFixApplies?1:-1)*Math.cos(theta)*bendSign;
+    return [basePx + zEff*nx, basePz + zEff*nz];
+  }
+
+  // ЯКОРЬ ПОЗИЦИИ — единая логика для ВСЕХ траекторий (см. правку
+  // 2026-09-18 ниже): раньше чистая дуга без единого прямого сегмента
+  // (ANCHOR_AT_CORNER) якорилась через pts[0] — угол самой панели,
+  // структурно всегда даёт 0 смещения В ЭТОЙ ТОЧКЕ, что казалось
+  // "подтверждённым", но на реальных сферах-маркерах Base is
+  // (0150e246, кольцо из 4 чистых дуг, 16 сфер) давало ~37мм ошибки
+  // (мелкие детали визуально "разворачивались" — жалоба пользователя).
+  // Теперь ОБЕ ветки анкерятся через el.WorldPos, различается только
+  // САМА опорная точка на панели, которую мы в это WorldPos совмещаем:
+  // для чистой дуги это ЦЕНТР ОКРУЖНОСТИ гиба (физическая ось, вокруг
+  // которой всё гнётся) — в локальных координатах (до применения frameMat)
+  // она РОВНО (-R, ширина, 0) и НЕ зависит ни от zAnchor, ни от bendSign
+  // (выводится из bendXZ: при фиксированном z кривая — окружность радиуса
+  // (R∓zEff) с центром (0,-R) в плоскости (along,z) ДО свопа — центр один
+  // и тот же для всех z и обоих знаков bendSign). Для панели с прямым
+  // участком опорная точка прежняя — "дальний торец" (rawFar). Проверено
+  // на 0150e246: все 32 угла (4 панели × 8) сошлись РОВНО в 0.000мм.
+  const hasStraight = segs.some(s => s.type === 'line');
+  const ANCHOR_AT_CORNER = !hasStraight;
+  let worldShiftAfterFrame = null;
+  if (ANCHOR_AT_CORNER && el.WorldPos){
+    const targetWorldForWidth = new THREE.Vector3(el.WorldPos[0]*MM_TO_M, el.WorldPos[1]*MM_TO_M, el.WorldPos[2]*MM_TO_M);
+    const targetLocalForWidth = targetWorldForWidth.clone().applyMatrix4(inv);
+    const targetWidthLocal = bendAxisIsX ? targetLocalForWidth.y : targetLocalForWidth.x;
+    const widthMinM = bendAxisIsX ? minY : minX, widthMaxM = bendAxisIsX ? maxY : maxX;
+    const widthEdgeM = (Math.abs(targetWidthLocal - widthMinM) <= Math.abs(targetWidthLocal - widthMaxM)) ? widthMinM : widthMaxM;
+    const arcSeg = orderedSegs.find(s => s.type === 'arc');
+    const R = arcSeg ? arcSeg.R : 0;
+    const rawCenter = new THREE.Vector3();
+    if (bendAxisIsX) rawCenter.set(-R, widthEdgeM, 0); else rawCenter.set(widthEdgeM, -R, 0);
+    rawCenter.applyMatrix4(frameMat);
+    worldShiftAfterFrame = targetWorldForWidth.clone().sub(rawCenter);
+  } else if (el.WorldPos) {
+    // ФИКС (2026-09-18, по реальным данным пользователя — файл с 8 сферами-
+    // маркерами на известных координатах Base is) — "край ширины" раньше
+    // был жёстко зашит как minY/minX. На файле с прямыми участками по ОБЕИМ
+    // концам дуги это оказалось НЕ ТЕМ краем (реальные точки Base is не
+    // совпадали численно, весь щит уезжал на всю ширину). Ширина НИКОГДА
+    // не участвует в самом изгибе (bendXZ её не трогает вообще) — значит
+    // локальная ширина точки `el.WorldPos` (посчитанная через `inv`, ТУ ЖЕ
+    // матрицу, что и для вершин меша) обязана РОВНО совпасть с одним из
+    // двух реальных краёв контура (min или max) — она НЕ проходит через
+    // искажающий bend, поэтому это надёжный, вычислимый (не подобранный)
+    // признак, какой край на самом деле имел в виду Base is для этого
+    // конкретного файла. Проверено на обоих опорных файлах: `9e750bd9`
+    // (WorldPos локально у 0мм = minY, совпадает со старым кодом, регрессий
+    // нет) и новом 8-точечном файле (WorldPos локально у 2600мм = maxY,
+    // раньше бралась minY — отсюда и уезжал весь щит на свою ширину).
+    const targetWorldForWidth = new THREE.Vector3(el.WorldPos[0]*MM_TO_M, el.WorldPos[1]*MM_TO_M, el.WorldPos[2]*MM_TO_M);
+    const targetLocalForWidth = targetWorldForWidth.clone().applyMatrix4(inv);
+    const targetWidthLocal = bendAxisIsX ? targetLocalForWidth.y : targetLocalForWidth.x;
+    const widthMinM = bendAxisIsX ? minY : minX, widthMaxM = bendAxisIsX ? maxY : maxX;
+    const widthEdgeM = (Math.abs(targetWidthLocal - widthMinM) <= Math.abs(targetWidthLocal - widthMaxM)) ? widthMinM : widthMaxM;
+    const alongMaxM = alongMinM + totalLenM;
+    const [naFar, nzFar] = bendXZ(alongMaxM, 0);
+    const rawFar = new THREE.Vector3();
+    // ФИКС (2026-09-18, дополнено — своп осей (newAlong,newZ)→(along-слот
+    // кадра, толщина-слот) из фикса 2026-09-18 ниже остаётся 90°-поворотом
+    // (newZ, ширина, -newAlong), но знак толщины-слота — dynThickSwapSign
+    // (см. выше), НЕ голая константа -1: жёсткая "-naFar" сходилась только
+    // на b4d30114 (sweep=+90°) и давала регрессию ~217-226мм на f6d69e2e/
+    // 9e750bd9 (sweep=-90°). См. dynThickSwapSign выше — знак совпадает со
+    // знаком суммарного sweep дуговых участков, проверено по всем трём
+    // файлам сразу (спереди и после этого фикса — 0.000-0.0001мм везде).
+    if (bendAxisIsX) rawFar.set(-nzFar, widthEdgeM, dynThickSwapSign*(-naFar)); else rawFar.set(widthEdgeM, -nzFar, dynThickSwapSign*(-naFar));
+    rawFar.applyMatrix4(frameMat);
+    const targetWorld = targetWorldForWidth;
+    worldShiftAfterFrame = targetWorld.sub(rawFar);
+  }
   for (let i=0;i<posAttr.count;i++){
     v.fromBufferAttribute(posAttr, i);
     v.applyMatrix4(inv);
     const along = bendAxisIsX ? v.x : v.y;
     const z = v.z;
-    const theta = ((along - alongMinM) / arcLenM) * sweepAbs;
-    const r = R + bendSign*z;
-    const newAlong = r*Math.sin(theta);
-    const newZ = R - r*Math.cos(theta);
-    if (bendAxisIsX){ v.x = newAlong; v.z = newZ; }
-    else { v.y = newAlong; v.z = newZ; }
+    let [newAlong, newZ] = bendXZ(along, z);
+    if (bendAxisIsX){ v.x = -newZ; v.z = dynThickSwapSign*(-newAlong); }
+    else { v.y = -newZ; v.z = dynThickSwapSign*(-newAlong); }
     v.applyMatrix4(frameMat);
+    if (worldShiftAfterFrame) v.add(worldShiftAfterFrame);
     posAttr.setXYZ(i, v.x, v.y, v.z);
   }
   posAttr.needsUpdate = true;
   mesh.geometry.computeVertexNormals();
   mesh.geometry.computeBoundingSphere();
   mesh.geometry.computeBoundingBox();
+
+  // ФИКС (2026-09-17, РАЗГАДАНО по скриншоту-сравнению с самим Базисом:
+  // пользователь прислал скриншот Базиса, где гизмо детали стоит РОВНО в
+  // точке стыка дуги с соседним блоком, и скриншот Fotly, где ось стояла
+  // в ПРОТИВОПОЛОЖНОМ углу — на дальнем конце ПРЯМОГО участка) — три
+  // предыдущие попытки ("угол bounding box'а", "начало траектории along=
+  // alongMinM") мерили НЕ ТУ точку. Настоящий пивот Базиса для гнутой
+  // панели — это уже ИМЕЮЩАЯСЯ точка привязки координат меша (см. якорь
+  // выше): `pts[0]` для ANCHOR_AT_CORNER (кольца/сборки из чистых дуг —
+  // Trans совпадает с этим углом), `el.WorldPos` для !ANCHOR_AT_CORNER
+  // (уже ЧИСЛЕННО подтверждено реальными координатами Базиса как "дальний
+  // торец ДУГИ", см. bazis-b3d-format.md, "9e750bd9") — а вовсе не
+  // "along=alongMinM" (это дальний торец ПРЯМОГО участка, ДРУГОЙ конец
+  // детали). Раньше вычислял ОТДЕЛЬНУЮ точку через bendXZ вместо того,
+  // чтобы взять уже готовый якорь — ошибка была в выборе КОНЦА, а не в
+  // арифметике (числа сходились с "9e750bd9" потому, что там спрашивали
+  // именно про торец прямого участка, а не про сам пивот).
+  {
+    // ФИКС (2026-09-18, вслед за единым якорем выше) — раз ОБЕ ветки
+    // теперь совмещают свою опорную точку с el.WorldPos, пивот гизмо тоже
+    // берём из el.WorldPos для обеих (раньше ANCHOR_AT_CORNER откатывался
+    // на pts[0] — угол панели, а не физический центр/торец гиба).
+    const pivotVec = el.WorldPos
+      ? new THREE.Vector3(el.WorldPos[0]*MM_TO_M, el.WorldPos[1]*MM_TO_M, el.WorldPos[2]*MM_TO_M)
+      : pts[0].clone(); // фолбэк — нет WorldPos, не роняем рендер
+    mesh.userData.bentTrajectoryStart = pivotVec;
+    // ФИКС (2026-09-17, поправка пользователя "что-то с поворотом осей")
+    // — направление толщины (локальная Z, `pts[4]-pts[0]`) в bendXZ
+    // сдвигается ВДОЛЬ НОРМАЛИ (касательная повёрнута на -90°, умножена
+    // на bendSign) — даже в самой первой точке (θ=0) это ЗАВИСИТ от
+    // bendSign: d(newZ)/dz|θ=0 = -bendSign (см. вывод формулы выше,
+    // совпадает со старой проверенной "newZ=R-r·cosθ" при r=R+bendSign·z,
+    // θ=0 → newZ=-bendSign·z). Значит РЕАЛЬНАЯ мировая ось толщины — это
+    // `-bendSign · (pts[4]-pts[0])`, а НЕ голое `pts[4]-pts[0]` (которое
+    // подходит только для НЕгнутых панелей, где никакого bendSign нет).
+    // Ось X (касательная, `pts[1]-pts[0]`) и Y (ширина, `pts[2]-pts[0]`)
+    // bendSign не касается — width не участвует в изгибе вообще, а
+    // касательная в вдоль-направлении не зависит от bendSign по построению.
+    mesh.userData.bentZSign = -bendSign;
+    // ФИКС (2026-09-17, поправка пользователя "зелёная ось перепутана,
+    // причём не на всех [панелях]") — какая из локальных осей (X или Y
+    // плоского Contour) физически является "вдоль" (касательная, гнётся)
+    // и "поперёк" (ширина, не гнётся) — решает `bendAxisIsX`, а не
+    // жёстко привязано к индексу угла (pts[1] всегда X, pts[2] всегда
+    // Y). Раньше buildLocalAxesHelper рисовал красную стрелку ВСЕГДА из
+    // `pts[1]-pts[0]`, зелёную — ВСЕГДА из `pts[2]-pts[0]`, что верно
+    // ТОЛЬКО когда сама ось изгиба — локальный X (bendAxisIsX=true). На
+    // панелях, где ось изгиба — локальный Y (bendAxisIsX=false), красная
+    // и зелёная стрелки физически МЕНЯЮТСЯ РОЛЯМИ (что и объясняет "не на
+    // всех" — зависит от конкретной панели, не от файла целиком).
+    mesh.userData.bentAlongIsX = bendAxisIsX;
+  }
 }
 
 function buildContourPanelMesh(pts, rgb, el, daeMaterials, textureMap, textureLoader){
@@ -28210,18 +28719,26 @@ function buildContourPanelMesh(pts, rgb, el, daeMaterials, textureMap, textureLo
   mesh.userData.decorNormals = { min: minNormal, max: maxNormal };
   mesh.userData.animationChain = el.AnimationChain || null; // для пульсирующего курсора — есть ли у объекта анимация открывания
   if (hasLightMaterial){ mesh.layers.enable(BLOOM_LAYER); productLightMeshes.push(mesh); }
-  addCutCap(mesh, geo, edgeMat, el.MaterialName && el.MaterialName.split('\r')[0], (getEffectiveMaterialConfig(el)||{}).homogeneous); // крышка среза плоскостью — некромлёный материал, не пласть
-  addCutawayCap(mesh, geo, edgeMat); // то же самое, но для живого "Разреза"
+  // ВАЖНО: mesh.geometry, а НЕ geo — тот же баг, что чинили ниже для
+  // чёрного контура (см. комментарий там же и в buildPanelMesh):
+  // у "Гнутой" панели applyBentWarp выше уже подменил mesh.geometry на
+  // изогнутую версию, geo остаётся старой плоской — крышка среза
+  // строилась по НЕЙ (жалоба пользователя 2026-09-19).
+  addCutCap(mesh, mesh.geometry, edgeMat, el.MaterialName && el.MaterialName.split('\r')[0], (getEffectiveMaterialConfig(el)||{}).homogeneous); // крышка среза плоскостью — некромлёный материал, не пласть
+  addCutawayCap(mesh, mesh.geometry, edgeMat); // то же самое, но для живого "Разреза"
 
   // ВАЖНО: mesh.geometry, а не geo — у "Гнутой" панели applyBentWarp
   // выше уже подменил геометрию на изогнутую, geo остаётся старой
   // плоской (тот же баг, что был чуть выше в buildContourPanelMesh —
-  // см. комментарий там).
+  // см. комментарий там). Порог угла — см. подробный комментарий там же
+  // (EDGES_THRESHOLD_DEG): без этого на гнутой панели рисуется решётка
+  // из стыков между сегментами дуги, а не только настоящий контур.
+  const EDGES_THRESHOLD_DEG = el.BentContour ? 15 : 1;
   const edges = new THREE.LineSegments(
-    new THREE.EdgesGeometry(mesh.geometry),
-    new THREE.LineBasicMaterial({color:0x000000, clippingPlanes:[cutPlane, cutawayPlane]})
+    new THREE.EdgesGeometry(mesh.geometry, EDGES_THRESHOLD_DEG),
+    new THREE.LineBasicMaterial({color: contourColorForMesh(mesh), clippingPlanes:[cutPlane, cutawayPlane]})
   );
-  edges.visible = false;
+  edges.visible = true; // "Контур" теперь ВКЛЮЧЕН по умолчанию (прямая просьба пользователя 2026-09-17)
   edges.userData.isFlatEdges = true;
   mesh.add(edges);
 
@@ -28341,9 +28858,19 @@ function makeTextSprite(text, cssColor){
 function buildDimensionGroup(pts, el, lineColorHex){
   const grp = new THREE.Group();
   const size = (el.Size || [1,1,1]).map(s => s*MM_TO_M);
-  const thicknessAxis = size.indexOf(Math.min(...size));
+  // ось толщины/длины/плеча выбираем по МОДУЛЮ, а не по знаковому
+  // значению — el.Length (плечо выноски) у Базиса регулярно приходит
+  // ОТРИЦАТЕЛЬНЫМ (сторона, с которой рисовать вынос), и тогда он
+  // оказывался "меньше" крошечной оси толщины (EPS≈0.1мм) — код путал
+  // ось плеча с осью толщины, плечо схлопывалось почти в точку, и вся
+  // размерная линия с текстом лепилась прямо на поверхность детали
+  // (и пряталась внутри неё). Реальная жалоба пользователя (2026-09-15,
+  // живой файл): "не все размеры почему-то показывает" — у файла 15 из
+  // 21 размерных линий были именно с отрицательным Length.
+  const absSize = size.map(Math.abs);
+  const thicknessAxis = absSize.indexOf(Math.min(...absSize));
   const remaining = [0,1,2].filter(i => i !== thicknessAxis);
-  const lengthAxis = size[remaining[0]] >= size[remaining[1]] ? remaining[0] : remaining[1];
+  const lengthAxis = absSize[remaining[0]] >= absSize[remaining[1]] ? remaining[0] : remaining[1];
   const armAxis = remaining.find(i => i !== lengthAxis);
 
   function corner(lengthBit, armBit, thickBit){
@@ -28520,7 +29047,7 @@ function buildScene(data, label, daeRoot, daeMaterials, textureMap){
   const textureLoader = new THREE.TextureLoader();
   const fastenerTemplates = {}; // normName -> parts[] (локальный шаблон формы) | null (пробовали, не нашли)
 
-  let nMesh=0, nLines=0, nRealFastener=0, nSkippedIgnored=0, nSkippedDegenerate=0, nSkippedError=0, nAuxContours=0;
+  let nMesh=0, nLines=0, nRealFastener=0, nSkippedIgnored=0, nSkippedDegenerate=0, nSkippedError=0, nAuxContours=0, nSpheres=0;
   let nProductLightsMatched=0; // диагностика "света изделий"
   const allMaterialCategoriesSeen = new Set(); // на случай, если совпадений 0 — покажем, что реально пришло в JSON
 
@@ -28643,6 +29170,28 @@ function buildScene(data, label, daeRoot, daeMaterials, textureMap){
       lines.name = name;
       group.add(lines);
       nAuxContours++;
+      return;
+    }
+
+    // "Сфера" (Type=2003, .b3d, см. b3dObjToElement) — простой примитив-
+    // маркер, по прямой просьбе пользователя (ставит их точками на
+    // известные координаты для сверки формул изгиба). Материал — по
+    // имени, как у обычных панелей (getEffectiveMaterialConfig), иначе
+    // нейтральный серый — эти маркеры почти всегда без материала.
+    if (el.IsSphere){
+      const guess = getEffectiveMaterialConfig(el);
+      const mat = new THREE.MeshStandardMaterial({
+        color: (guess && guess.color !== undefined) ? guess.color : 0xff3b30,
+        roughness: (guess && guess.roughness !== undefined) ? guess.roughness : 0.5,
+        metalness: (guess && guess.metalness !== undefined) ? guess.metalness : 0,
+        clippingPlanes: [cutPlane, cutawayPlane],
+      });
+      const sphereMesh = new THREE.Mesh(new THREE.SphereGeometry(el.Radius*MM_TO_M, 20, 14), mat);
+      sphereMesh.position.set(el.Center[0]*MM_TO_M, el.Center[1]*MM_TO_M, el.Center[2]*MM_TO_M);
+      sphereMesh.name = name;
+      if (el.MaterialName) sphereMesh.userData.materialName = el.MaterialName.split('\r')[0];
+      group.add(sphereMesh);
+      nSpheres++;
       return;
     }
 
@@ -28790,6 +29339,8 @@ function buildScene(data, label, daeRoot, daeMaterials, textureMap){
       }
       group.add(mesh);
       nMesh++;
+      const localAxes = buildLocalAxesHelper(pts, mesh);
+      if (localAxes){ localAxes.name = name + ' (локальные оси)'; group.add(localAxes); }
     }
   });
 
@@ -28803,7 +29354,15 @@ function buildScene(data, label, daeRoot, daeMaterials, textureMap){
   currentModelGroup = group;
   drawAllAnimationAxisMarkers(data.Elements); // оси анимации видны сразу, не только после клика/долгого нажатия
 
-  const box = new THREE.Box3().setFromObject(group);
+  // ФИКС (2026-09-17) — `Box3.setFromObject` обходит ВСЕХ детей независимо
+  // от `.visible` (в этой версии three.js), поэтому "Локальные оси
+  // панелей" (см. buildLocalAxesHelper) искажали автоподгон камеры для
+  // ЛЮБОГО файла с гнутыми панелями ДАЖЕ ВЫКЛЮЧЕННЫМИ — пойман
+  // пользователем сразу вживую ("чето с позиционированием"). Считаем
+  // бокс сами, пропуская объекты с `userData.isLocalAxes` (добавляются
+  // прямо в `group`, не вложены глубже).
+  const box = new THREE.Box3();
+  group.children.forEach(child => { if (!child.userData || !child.userData.isLocalAxes) box.expandByObject(child); });
   const sizeV = box.getSize(new THREE.Vector3());
   const center = box.getCenter(new THREE.Vector3());
   const maxDim = Math.max(sizeV.x, sizeV.y, sizeV.z) || 1;
@@ -28857,6 +29416,7 @@ function buildScene(data, label, daeRoot, daeMaterials, textureMap){
     `фурнитура (3D): <span>${nRealFastener}</span> · `+
     `фурнитура (линии): <span>${nLines}</span>` +
     (nAuxContours ? ` · вспом. контуры: <span>${nAuxContours}</span>` : '') +
+    (nSpheres ? ` · сферы: <span>${nSpheres}</span>` : '') +
     ` · пропущено: <span>${nSkippedIgnored+nSkippedDegenerate}</span>`;
   document.getElementById('hud').style.display = '';
   document.getElementById('fileNameBar').style.display = '';
@@ -29306,6 +29866,12 @@ window.addEventListener('pointermove', (e) => {
   if (!mcDragState) return;
   if (mcDragState.type === 'move'){
     const dx = e.clientX - mcDragState.startX, dy = e.clientY - mcDragState.startY;
+    // moved — тот же 4px-порог, что у makeHeaderCollapsible: нужен, чтобы
+    // ПРОСТОЙ ТАП по шапке (сворачивание/разворачивание, без намерения
+    // тащить) не помечал панель в panelDockState как "перетащенную вручную"
+    // — иначе такая панель тут же выпадала бы из автостолбика
+    // layoutTouchPanelStack() от одного клика (см. pointerup ниже).
+    if (!mcDragState.moved && Math.hypot(dx, dy) > 4) mcDragState.moved = true;
     const el = mcDragState.el;
     const left = mcDragState.startLeft + dx;
     const top = Math.max(topBarHeight(), mcDragState.startTop + dy); // не даём затащить окно НА верхнюю полосу
@@ -29331,7 +29897,7 @@ window.addEventListener('pointermove', (e) => {
   }
 });
 window.addEventListener('pointerup', () => {
-  if (mcDragState && mcDragState.type === 'move' && mcDragState.dockable){
+  if (mcDragState && mcDragState.type === 'move' && mcDragState.dockable && mcDragState.moved){
     const el = mcDragState.el, axis = mcDragState.axis;
     const side = mcSnapSideAt(parseFloat(el.style.left), parseFloat(el.style.top), el.offsetWidth, el.offsetHeight, axis);
     if (side){ mcDockCard(el, side); }
@@ -29384,28 +29950,25 @@ function repositionPanelsForTopBar(){
   });
 }
 
-function makeElDraggable(el, handle, dockable, axis, lockInTouchMode){
+function makeElDraggable(el, handle, dockable, axis){
   handle.style.cursor = 'move';
   handle.onpointerdown = (e) => {
-    // lockInTouchMode — по прямой жалобе пользователя со скриншота
-    // реального телефона (2026-09-09): "Камеры"/"Сечение"/"Материал" —
-    // независимые плавающие окошки с desktop-координатами, на узком
-    // экране легли друг на друга. В режиме "Сенсор" эти три панели
-    // выстраивает вертикальным столбиком layoutTouchPanelStack() —
-    // свободное перетаскивание тут же мешало бы (пользователь утащит,
-    // а функция не будет знать, куда "вернуть"), поэтому для НИХ
-    // конкретно (не для quickBar — та осталась как была, drag не трогали)
-    // перетаскивание в тач-режиме отключено. Проверяется на каждый
-    // pointerdown, а не один раз при инициализации — реагирует на
-    // переключение режима "на лету", без перезагрузки страницы.
-    if (lockInTouchMode && document.body.classList.contains('input-touch')) return;
+    // БЫЛ жёсткий запрет драга в тач-режиме для "Камеры"/"Сечение"/
+    // "Материал" (2026-09-09) — свободное перетаскивание конфликтовало
+    // с автостолбиком layoutTouchPanelStack(). Убран по прямой просьбе
+    // (2026-09-19, "чиним перемещение окон сенсором"): теперь
+    // перетащенная тачем панель просто помечается в panelDockState (см.
+    // pointerup ниже) и с этого момента layoutTouchPanelStack() её
+    // больше не трогает — конфликта нет, но контроль пользователю
+    // возвращён.
     const rect = el.getBoundingClientRect();
     mcDragState = { type:'move', el, startX:e.clientX, startY:e.clientY, startLeft:rect.left, startTop:rect.top, dockable:!!dockable, axis: axis || 'x' };
   };
 }
 
 // Вертикальный столбик для "Камеры"/"Сечение"/"Материал" в режиме
-// "Сенсор" — см. комментарий у lockInTouchMode выше. Порядок фиксирован
+// "Сенсор" (для панелей, которые пользователь не перетаскивал вручную —
+// см. panelDockState-фильтр ниже). Порядок фиксирован
 // (camPanel, cutPanel, materialCard), высота каждой берётся по факту
 // (offsetHeight, разная у свёрнутой/развёрнутой) — вызывается заново при
 // показе панелей и при каждом сворачивании/разворачивании, т.к. высота
@@ -29448,7 +30011,13 @@ function layoutTouchPanelStack(){
   // выше по стопке) ничего не оставалось — их прижимало выше верхней
   // плашки, той же болезнью, что мы чиним ("свернуть не выходит").
   const PANEL_MIN_RESERVE = 44;
-  const visibleIds = ids.filter(id => { const e = document.getElementById(id); return e && !e.classList.contains('hidden'); });
+  // panelDockState[id] существует ТОЛЬКО если панель уже была вручную
+  // перетащена/пристыкована (см. pointerup у mcDragState ниже) — раз
+  // пользователь сам её разместил (тачем теперь тоже можно, см.
+  // makeElDraggable), автостолбик её больше не трогает, иначе перетащенная
+  // панель тут же прыгала бы обратно в стопку при следующем сворачивании/
+  // разворачивании соседней панели или повороте экрана.
+  const visibleIds = ids.filter(id => { const e = document.getElementById(id); return e && !e.classList.contains('hidden') && !panelDockState[id]; });
   let bottom = 8;
   for (let i = visibleIds.length - 1; i >= 0; i--){
     const el = document.getElementById(visibleIds[i]);
@@ -29907,7 +30476,7 @@ function refreshMaterialLivePreviewGui(group){
       (materialCardFullFeatured ? '<button class="btn mcFootBtn" id="mcMatLibBtn">Указать папку материалов…</button>' : '') +
     '</div>';
   document.body.appendChild(materialCardEl);
-  makeElDraggable(materialCardEl, materialCardEl.querySelector('.mcHead'), true, 'x', true); // lockInTouchMode — см. комментарий у makeElDraggable
+  makeElDraggable(materialCardEl, materialCardEl.querySelector('.mcHead'), true, 'x');
   makeHeaderCollapsible(materialCardEl.querySelector('.mcHead'), materialCardEl); // см. defaultPanelCollapsed — пересобирается заново, поэтому и подключаем заново
   materialCardEl.classList.toggle('collapsed', defaultPanelCollapsed());
   layoutTouchPanelStack(); // camPanel/cutPanel уже показаны и получили дефолт выше по buildScene — теперь, когда materialCard тоже готова, раскладываем столбик целиком
@@ -32303,6 +32872,19 @@ function b3dObjToElement(fields, warnings, worldPos, worldQuat, furnMap, depth){
     return { Name: name, IsAuxContour: true, WireLines: positions, LineColor: colorF };
   }
 
+  // "Сфера" (Type=2003, .b3d) — простой примитив-маркер (в частности,
+  // пользователь ставит такие точками-метками на известные координаты
+  // для сверки формул изгиба с реальным Base is, см. bazis-b3d-format.md).
+  // Поля: `Radius` (мм, число) + обычный `Trans` (позиция, без поворота —
+  // сфера сама по себе не имеет ориентации). Раньше падала в unknown/null
+  // целиком — по прямой просьбе пользователя добавлена отрисовка.
+  if (typeField === 2003 && trans !== undefined){
+    const radiusMM = b3dField(fields, 'Radius');
+    if (!(radiusMM > 0)) { warnings.badObject++; return null; }
+    const center = b3dUpAxisRemap(worldPos);
+    return { Name: name, IsSphere: true, Center: [center.x, center.y, center.z], Radius: radiusMM, MaterialName: matName || null };
+  }
+
   // "Размер" (Type=9000, .b3d) — размерная линия. По прямой жалобе
   // пользователя ("вьювер размеры не показывает", живой файл "Денис 2
   // Детская шкаф-кровать.b3d", 17 объектов этого типа) — раньше тип
@@ -32931,6 +33513,32 @@ function b3dObjToElement(fields, warnings, worldPos, worldQuat, furnMap, depth){
       // buildContourPanelMesh, поиск "FaceOverride").
       FaceOverrideMin: faceOverrideMin,
       FaceOverrideMax: faceOverrideMax,
+      // Для applyBentWarp (гнутая панель) — сколько мм облицовки/приклейки
+      // добавлено с БЛИЖНЕЙ стороны (Side=1). Нужно, чтобы точка "радиус
+      // без добавки" при изгибе была привязана к СОБСТВЕННОЙ грани базовой
+      // панели (16мм ЛДСП и т.п.), а не к внешнему краю всей толщины со
+      // включённой облицовкой — иначе при смене стороны облицовки съезжает
+      // вся сборка (16+4мм), а не только сама облицовка. См. applyBentWarp.
+      ExtraNear: extraNear,
+      // Для applyBentWarp — собственная (локальная, в мм) рамка Contour
+      // детали. У "Гнутой" панели может быть прямой (негнутый) участок до
+      // и/или после самой дуги — BentContour описывает только СРЕДНЮЮ,
+      // изогнутую часть. gMinX/gMinY — это и есть смещение начала
+      // материала относительно "сырого" локального нуля (где раскрыт сам
+      // BentContour.p1) — см. applyBentWarp.
+      GMinX: gMinX, GMinY: gMinY,
+      // Для applyBentWarp — мировая позиция объекта, нужна как ТОЧКА
+      // ПРИВЯЗКИ для "Гнутой" панели: подтверждено пользователем на живых
+      // числах из Базиса — WorldPos РОВНО совпадает с дальним торцом ДУГИ
+      // (тем концом, который цепляется к соседней детали), а не с каким-то
+      // абстрактным углом плоского контура. `worldPos` (параметр функции)
+      // — НАТИВНЫЕ координаты Базиса (та же величина, что кладётся в
+      // posNative чуть выше и чуть ниже) — те же, что видит пользователь
+      // В САМОМ БАЗИСЕ; но el.Corners (использует pts/frameMat в
+      // applyBentWarp) уже прогнаны через b3dUpAxisRemap — чтобы обе
+      // величины были в ОДНОЙ системе координат, применяем тот же remap
+      // здесь же, один раз, а не в applyBentWarp.
+      WorldPos: worldPos ? (() => { const r = b3dUpAxisRemap(worldPos); return [r.x, r.y, r.z]; })() : null,
     };
     return elResult;
   }
@@ -33170,6 +33778,20 @@ async function handleB3DFile(file, daeFile){
         // добавлять отдельно больше нечего.
       }
     }
+    // Для applyBentWarp ("Гнутая" панель) — сколько ВСЕГО таких панелей
+    // (BentContour) в файле. Нужно различать ДВА разных случая: несколько
+    // "Гнутых" собраны в кольцо/полукольцо (там работает "зеркало по
+    // хорде" — оно намеренно РАЗВОРАЧИВАЕТ каждую следующую дугу, чтобы
+    // они продолжали друг друга, а не повторяли свой же завиток) — и
+    // ОДНА "Гнутая" с прямым участком, стыкующаяся ТОРЦАМИ с обычными
+    // (не гнутыми) плоскими панелями — там "зеркало" не нужно и ломает
+    // точную стыковку (см. bazis-b3d-format.md, живые координаты из
+    // Базиса). Единственный найденный надёжный сигнал — сколько всего
+    // "Гнутых" деталей в файле: одна — простой случай, несколько —
+    // сборка/кольцо.
+    const bentCount = elements.filter(e => e.BentContour).length;
+    elements.forEach(e => { if (e.BentContour) e.BentSiblingCount = bentCount; });
+
     if (!elements.length){
       throw new Error(`ни одного распознанного объекта (сырых Obj в файле: ${objs.length}, `+
         `нераспознанных типов: ${warnings.unknown}, ошибок разбора: ${warnings.badObject}, `+
@@ -33272,6 +33894,14 @@ document.getElementById('outlineBtn').onclick = () => {
   const newState = anyEdges.length ? !anyEdges[0].visible : true;
   anyEdges.forEach(e => e.visible = newState);
   document.getElementById('outlineBtn').textContent = 'Контур: ' + (newState ? 'вкл' : 'выкл');
+};
+
+document.getElementById('localAxesBtn').onclick = () => {
+  const anyAxes = [];
+  scene.traverse(obj => { if (obj.userData && obj.userData.isLocalAxes) anyAxes.push(obj); });
+  const newState = anyAxes.length ? !anyAxes[0].visible : true;
+  anyAxes.forEach(a => a.visible = newState);
+  document.getElementById('localAxesBtn').textContent = 'Локальные оси панелей: ' + (newState ? 'вкл' : 'выкл');
 };
 
 // ============================================================
@@ -33444,9 +34074,11 @@ function setStandardView(dir, up){
   const {center, maxDim} = fullSceneView;
   camera.up.copy(up || new THREE.Vector3(0,1,0));
   camera.position.copy(center).addScaledVector(dir, maxDim * 1.8);
-  controls.target.copy(center);
   camera.updateProjectionMatrix();
-  controls.update();
+  // camera.up только что мог поменяться (виды сверху/снизу) — пересоздаём
+  // controls, а не просто controls.target.copy()+update(), см. комментарий
+  // у recreateControls().
+  recreateControls(center);
 }
 document.getElementById('viewFrontBtn').onclick = () => setStandardView(new THREE.Vector3(0,0,1));
 document.getElementById('viewBackBtn').onclick = () => setStandardView(new THREE.Vector3(0,0,-1));
@@ -33606,13 +34238,108 @@ document.getElementById('bgColorInput').oninput = (e) => {
   try { localStorage.setItem(BG_COLOR_STORAGE_KEY, e.target.value); } catch(err){}
 };
 
+// Цвет окон (--panel) — красит ВСЕ UI-окна разом (панели/шапка/кнопки/
+// модалки — см. комментарий у #panelColorInput в HTML), т.к. все они
+// уже используют var(--panel), достаточно поменять саму custom property
+// на :root, перекраска остальных элементов — забота CSS-каскада, руками
+// ничего не обходим (в отличие от цвета контура ниже).
+const PANEL_COLOR_STORAGE_KEY = 'fotlyPanelColor_v1';
+(function initPanelColor(){
+  let saved = null;
+  try { saved = localStorage.getItem(PANEL_COLOR_STORAGE_KEY); } catch(e){}
+  if (saved){
+    document.documentElement.style.setProperty('--panel', saved);
+    document.getElementById('panelColorInput').value = saved;
+  }
+})();
+document.getElementById('panelColorInput').oninput = (e) => {
+  document.documentElement.style.setProperty('--panel', e.target.value);
+  try { localStorage.setItem(PANEL_COLOR_STORAGE_KEY, e.target.value); } catch(err){}
+};
+
+// Цвет контура панелей (EdgesGeometry-обводка, см. isFlatEdges) — раньше
+// был намертво зашит чёрным (0x000000) во всех местах, где строится
+// (buildContourPanelMesh/buildOtherPanelMesh/addCutCap). По прямой просьбе
+// пользователя (2026-09-21): цвет настраиваемый + режим "Адаптивный" —
+// контур сам выбирает чёрный/белый по яркости материала панели (тёмный
+// материал — белый контур, светлый — чёрный), чтобы обводка не сливалась
+// с тёмными панелями. Тот же паттерн хранения, что у BG_COLOR_STORAGE_KEY.
+const CONTOUR_COLOR_STORAGE_KEY = 'fotlyContourColor_v1';
+const CONTOUR_ADAPTIVE_STORAGE_KEY = 'fotlyContourAdaptive_v1';
+let contourColorHex = 0x000000;
+let contourAdaptive = false;
+function contourLuminanceOf(color){ return 0.2126*color.r + 0.7152*color.g + 0.0722*color.b; }
+// Берёт ВСЕ материалы меша (пласть/торец/кромка у buildPanelMesh —
+// это material-массив, не один материал) и усредняет яркость — одна
+// панель не должна получать разный контур с разных сторон только
+// потому, что торец и пласть выкрашены по-разному.
+function adaptiveContourColorForMesh(mesh){
+  if (!mesh) return 0x000000;
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  const withColor = mats.filter(m => m && m.color);
+  if (!withColor.length) return 0x000000;
+  const avgLum = withColor.reduce((s,m) => s + contourLuminanceOf(m.color), 0) / withColor.length;
+  return avgLum > 0.5 ? 0x000000 : 0xffffff;
+}
+function contourColorForMesh(mesh){
+  return contourAdaptive ? adaptiveContourColorForMesh(mesh) : contourColorHex;
+}
+// Перекрашивает УЖЕ построенный контур при смене настройки — вызывается
+// из обработчиков ниже, а не только при сборке сцены. Обычные рёбра
+// панели висят прямо на mesh (mesh.add(edges), см. buildContourPanelMesh/
+// buildOtherPanelMesh) — родитель и есть нужный mesh. Крышки среза
+// (addCutCap) — отдельный случай: capOutline лежит в cutCapGroup, а не на
+// capMesh, поэтому для них используем currentCutCapSources напрямую
+// (тот же реестр, что и у rebuildCutCaps).
+function refreshAllContourColors(){
+  scene.traverse(obj => {
+    if (obj.userData && obj.userData.isFlatEdges && obj.parent && obj.parent.isMesh){
+      obj.material.color.setHex(contourColorForMesh(obj.parent));
+    }
+  });
+  currentCutCapSources.forEach(({capMesh, capOutline}) => {
+    if (capOutline) capOutline.material.color.setHex(contourColorForMesh(capMesh));
+  });
+}
+(function initContourColor(){
+  let savedColor = null, savedAdaptive = null;
+  try {
+    savedColor = localStorage.getItem(CONTOUR_COLOR_STORAGE_KEY);
+    savedAdaptive = localStorage.getItem(CONTOUR_ADAPTIVE_STORAGE_KEY);
+  } catch(e){}
+  if (savedColor){
+    contourColorHex = parseInt(savedColor.slice(1), 16);
+    document.getElementById('contourColorInput').value = savedColor;
+  }
+  if (savedAdaptive === '1'){
+    contourAdaptive = true;
+    document.getElementById('contourAdaptiveCheck').checked = true;
+    document.getElementById('contourColorInput').disabled = true;
+  }
+})();
+document.getElementById('contourColorInput').oninput = (e) => {
+  contourColorHex = parseInt(e.target.value.slice(1), 16);
+  try { localStorage.setItem(CONTOUR_COLOR_STORAGE_KEY, e.target.value); } catch(err){}
+  refreshAllContourColors();
+};
+document.getElementById('contourAdaptiveCheck').onchange = (e) => {
+  contourAdaptive = e.target.checked;
+  document.getElementById('contourColorInput').disabled = contourAdaptive;
+  try { localStorage.setItem(CONTOUR_ADAPTIVE_STORAGE_KEY, contourAdaptive ? '1' : '0'); } catch(err){}
+  refreshAllContourColors();
+};
+
 document.getElementById('resetViewBtn').onclick = () => {
   if (!fullSceneView) return;
   const {center, maxDim} = fullSceneView;
-  controls.target.copy(center);
+  // camera.up тоже возвращаем к штатному (0,1,0) — виды "Сверху"/"Снизу"
+  // (setStandardView) могли оставить его повёрнутым; без этого Reset не
+  // до конца чинил "заблокированное" вращение, см. комментарий у
+  // recreateControls().
+  camera.up.set(0, 1, 0);
   camera.position.set(center.x+maxDim*1.1, center.y+maxDim*0.75, center.z+maxDim*1.3);
   camera.updateProjectionMatrix();
-  controls.update();
+  recreateControls(center);
 };
 
 document.getElementById('reloadBtn').onclick = () => {
@@ -33638,6 +34365,16 @@ document.getElementById('reloadBtn').onclick = () => {
   document.getElementById('aboutBtn2').onclick = open;
   document.getElementById('aboutOkBtn').onclick = close;
   overlay.onclick = (e) => { if (e.target === overlay) close(); }; // клик по тёмному фону — тоже закрыть, мимо карточки
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && overlay.classList.contains('shown')) close(); });
+})();
+
+(function setupSettingsDialog(){
+  const overlay = document.getElementById('settingsOverlay');
+  const open = () => overlay.classList.add('shown');
+  const close = () => overlay.classList.remove('shown');
+  document.getElementById('settingsBtn').onclick = open;
+  document.getElementById('settingsOkBtn').onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && overlay.classList.contains('shown')) close(); });
 })();
 
@@ -33914,12 +34651,12 @@ function closeCamNameModal(){
 // ТОТ ЖЕ makeElDraggable(el, handle, dockable=true), что и карточка
 // материала — общий механизм panelDockState (см. выше) сам следит за
 // стыковкой при resize и при повторном показе панели.
-makeElDraggable(document.getElementById('camPanel'), document.querySelector('#camPanel .panelHead'), true, 'x', true); // lockInTouchMode — см. комментарий у makeElDraggable
+makeElDraggable(document.getElementById('camPanel'), document.querySelector('#camPanel .panelHead'), true, 'x');
 makeHeaderCollapsible(document.querySelector('#camPanel .panelHead'), document.getElementById('camPanel'));
 
 // Панель "Сечение" (разрез плоскостью) — та же логика, что и "Камеры"
 // выше, отдельное окно по прямой просьбе пользователя.
-makeElDraggable(document.getElementById('cutPanel'), document.querySelector('#cutPanel .panelHead'), true, 'x', true); // lockInTouchMode
+makeElDraggable(document.getElementById('cutPanel'), document.querySelector('#cutPanel .panelHead'), true, 'x');
 makeHeaderCollapsible(document.querySelector('#cutPanel .panelHead'), document.getElementById('cutPanel'));
 
 // "Открыть файл"/"Собрать архив"/"О программе" — больше НЕ перетаскивается
