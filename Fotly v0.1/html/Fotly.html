@@ -287,6 +287,10 @@
   #newsBody .newsItem:last-child{border-bottom:none; margin-bottom:0; padding-bottom:0;}
   #newsBody .newsDate{font-size:11px; color:var(--muted);}
   #newsBody .newsTitle{font-size:13px; font-weight:bold; color:var(--text); margin:2px 0 4px;}
+  .newsPreviewLink{display:inline-block; margin-top:2px; font-size:12px; font-weight:600; color:#2a7de1; text-decoration:none; pointer-events:auto;}
+  .newsPreviewLink:hover{text-decoration:underline;}
+  #newsBody .newsLink{display:inline-block; margin-top:6px; font-size:13px; font-weight:600; color:#2a7de1; text-decoration:none;}
+  #newsBody .newsLink:hover{text-decoration:underline;}
   #newsBody .newsText{font-size:12px; color:var(--text); white-space:pre-wrap; user-select:text;}
   #newsBody .newsEmpty{font-size:13px; color:var(--muted); padding:4px 0;}
   #newsCard #newsOkBtn{width:100%; box-sizing:border-box; text-align:center;}
@@ -36863,6 +36867,7 @@ async function fetchNewsItems(){
             <div class="newsDate">${esc(it.date)}${it.version ? ' · v' + esc(String(it.version)) : ''}</div>
             <div class="newsTitle">${esc(it.title)}</div>
             <div class="newsText">${esc(it.body)}</div>
+            ${/^https:\/\//.test(String(it.link||'')) ? `<a class="newsLink" href="${esc(it.link)}" target="_blank" rel="noopener">${esc(it.linkText||'Открыть')} →</a>` : ''}
           </div>`).join('')
       : '<div class="newsEmpty">Не удалось загрузить новости (нет интернета?) либо пока пусто.</div>';
   };
@@ -36891,6 +36896,7 @@ async function fetchNewsItems(){
         <div class="newsPreviewItem">
           <div class="newsPreviewDate">${esc(it.date)}</div>
           <div class="newsPreviewItemTitle">${esc(it.title)}</div>
+          ${/^https:\/\//.test(String(it.link||'')) ? `<a class="newsPreviewLink" href="${esc(it.link)}" target="_blank" rel="noopener">${esc(it.linkText||'Открыть')} →</a>` : ''}
         </div>`).join('')
     : '<div class="newsPreviewEmpty">Новостей пока нет</div>';
 })();
